@@ -31,7 +31,7 @@ class GE_TimingInfo:
             #trying to change inputs to make this compatible with both multi-folder DCE and single-folder DCE cases
 
             try:
-                header = pydicom.dcmread(img1path,stop_before_pixels = True)
+                header = pydicom.dcmread(img1path,stop_before_pixels = True, force=True)
             except:
                 header = dicom.read_file(img1path)
 

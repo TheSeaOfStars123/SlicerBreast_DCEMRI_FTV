@@ -253,7 +253,7 @@ def createPDFreport(gzipped,path,savenamepdf,tempres,fsort,manufacturer,dce_fold
     pre_img1path = os.path.join(pre_path,pre_imgs[0])
 
     try:
-      pre_hdr1 = pydicom.dcmread(pre_img1path,stop_before_pixels = True)
+      pre_hdr1 = pydicom.dcmread(pre_img1path,stop_before_pixels = True, force=True)
     except:
       pre_hdr1 = dicom.read_file(pre_img1path)
 
@@ -282,7 +282,7 @@ def createPDFreport(gzipped,path,savenamepdf,tempres,fsort,manufacturer,dce_fold
         earlyslice1path = os.path.join(earlypath,files[0])
 
     try:
-        earlyslice1hdr = pydicom.dcmread(earlyslice1path,stop_before_pixels = True)
+        earlyslice1hdr = pydicom.dcmread(earlyslice1path,stop_before_pixels = True, force=True)
     except:
         earlyslice1hdr = dicom.read_file(earlyslice1path)
 
@@ -449,7 +449,7 @@ def createPDFreport(gzipped,path,savenamepdf,tempres,fsort,manufacturer,dce_fold
         lateslice1path = os.path.join(latepath,files[0])
 
     try:
-        lateslice1hdr = pydicom.dcmread(lateslice1path,stop_before_pixels = True)
+        lateslice1hdr = pydicom.dcmread(lateslice1path,stop_before_pixels = True,force=True)
     except:
         lateslice1hdr = dicom.read_file(lateslice1path)
 

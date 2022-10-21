@@ -341,7 +341,7 @@ class DCE_IDandPhaseSelectWidget(ScriptedLoadableModuleWidget):
           dcm_folder_found = 1
 
         if(dcm_folder_found == 1):
-          hdr_dcm1 = pydicom.dcmread(dcm1path,stop_before_pixels = True)
+          hdr_dcm1 = pydicom.dcmread(dcm1path,stop_before_pixels = True, force = True)
           try:
             self.studystr = hdr_dcm1[0x12,0x10].value #Clinical Trial Sponsor Name
           except:

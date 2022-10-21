@@ -282,7 +282,7 @@ class DCE_TumorMapProcessWidget(ScriptedLoadableModuleWidget):
     pre_files = os.listdir(pre_path)
     pre_files = sorted(pre_files)
     dcm1path = os.path.join(pre_path,pre_files[0])
-    hdr_dcm1 = pydicom.dcmread(dcm1path,stop_before_pixels = True)
+    hdr_dcm1 = pydicom.dcmread(dcm1path, stop_before_pixels=True, force=True)
 
     #7/23/2021: Need this because image reshaping different
     #when axial slices are not square (nrow != ncol).
@@ -2114,7 +2114,7 @@ class DCE_TumorMapProcessWidget(ScriptedLoadableModuleWidget):
         pre_img1path = os.path.join(pre_path,pre_imgs[0])
 
         try:
-          pre_hdr1 = pydicom.dcmread(pre_img1path,stop_before_pixels = True)
+          pre_hdr1 = pydicom.dcmread(pre_img1path,stop_before_pixels = True, force=True)
         except:
           pre_hdr1 = dicom.read_file(pre_img1path)
 

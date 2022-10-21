@@ -35,8 +35,9 @@ def computeAffineAndAffineInverse(exampath,prefoldernum,nslice,fsort):
     #If all DCE in same folder, nslice is already set to slices/phase, so N = nslice
     if (nslice == 0):
         N = len(files)
+        file1search1 = [i for i in files]
 
-        file1search1 = [i for i in files if '001.dcm' in i]
+        # file1search1 = [i for i in files if '001.dcm' in i]
         file1search2 = [i for i in files if '001.DCM' in i]
 
         #Added these 2 due to file naming in UCSF ISPY ID 16078
@@ -72,7 +73,7 @@ def computeAffineAndAffineInverse(exampath,prefoldernum,nslice,fsort):
 
 
     try:
-        img1 = pydicom.dcmread(file1)
+        img1 = pydicom.dcmread(file1, force=True)
     except:
         img1 = dicom.read_file(file1)
 
@@ -96,7 +97,8 @@ def computeAffineAndAffineInverse(exampath,prefoldernum,nslice,fsort):
     #Once again, separate by Philips and non-Philips (6/9/2020)
     if (nslice == 0):
         if (len(file1search1)>0 or len(file1search3)>0):
-            searchstr = str(N) + '.dcm'
+            searchstr = file1search1[-1]
+            # searchstr = str(N) + '.dcm'
         if (len(file1search2)>0 or len(file1search4)>0):
             searchstr = str(N) + '.DCM'
 
@@ -109,7 +111,7 @@ def computeAffineAndAffineInverse(exampath,prefoldernum,nslice,fsort):
         fileN = os.path.join(imgpath,fsort[0][N-1])
 
     try:
-        imgN = pydicom.dcmread(fileN)
+        imgN = pydicom.dcmread(fileN, force=True)
     except:
         imgN = dicom.read_file(fileN)
 
