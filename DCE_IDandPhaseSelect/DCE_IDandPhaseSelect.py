@@ -37,6 +37,10 @@ from qt import *
 from slicer.ScriptedLoadableModule import *
 import logging
 import numpy as np
+import traceback
+import tempfile
+
+from Breast_DCEMRI_FTV_plugins1 import PhaseSelectClient
 
 try:
   import nibabel as nib
@@ -258,6 +262,45 @@ This file was originally developed by Jean-Christophe Fillion-Robin, Kitware Inc
 and Steve Pieper, Isomics, Inc. and was partially funded by NIH grant 3P41RR013218-12S1.
 """  # TODO: replace with organization, grant and thanks.
 
+    # Additional initialization step after application startup is complete
+    slicer.app.connect("startupCompleted()", self.initializeAfterStartup)
+
+  def initializeAfterStartup(self):
+    if not slicer.app.commandOptions().noMainWindow:
+      self.settingsPanel = PhaseSelectSettingPanel()
+      print(slicer.app.settingsDialog())
+      print(slicer.app.settingsDialog().__dict__)
+      print(dir(slicer.app.settingsDialog()))
+
+      slicer.app.settingsDialog().addPanel("MONAI Label2", self.settingsPanel)
+
+class _ui_PhaseSelectSettingPanel:
+  def __init__(self, parent):
+    vBoxLayout = qt.QVBoxLayout(parent)
+
+    # settings
+    groupBox = ctk.ctkCollapsibleGroupBox()
+    groupBox.title = "Phase Select"
+    groupLayout = qt.QFormLayout(groupBox)
+
+    serverUrl = qt.QLineEdit()
+    groupLayout.addRow("Server address:", serverUrl)
+    parent.registerProperty("MONAILabel/serverUrl", serverUrl, "text", str(qt.SIGNAL("textChanged(QString)")))
+
+    serverUrlHistory = qt.QLineEdit()
+    groupLayout.addRow("Server address history:", serverUrlHistory)
+    parent.registerProperty(
+      "MONAILabel/serverUrlHistory", serverUrlHistory, "text", str(qt.SIGNAL("textChanged(QString)"))
+    )
+
+    vBoxLayout.addWidget(groupBox)
+    vBoxLayout.addStretch(1)
+
+class PhaseSelectSettingPanel(ctk.ctkSettingsPanel):
+  def __init__(self, *args, **kwargs):
+    ctk.ctkSettingsPanel.__init__(self, *args, **kwargs)
+    self.ui = _ui_PhaseSelectSettingPanel(self)
+
 #
 # DCE_IDandPhaseSelectWidget
 #
@@ -267,11 +310,28 @@ class DCE_IDandPhaseSelectWidget(ScriptedLoadableModuleWidget):
   https://github.com/Slicer/Slicer/blob/master/Base/Python/slicer/ScriptedLoadableModule.py
   """
 
+  def __init__(self, parent=None):
+    """
+    Called when the user opens the module the first time and the widget is initialized.
+    """
+    ScriptedLoadableModuleWidget.__init__(self, parent)
+    self.logic = None
+    self.file_ext = ".nii"
+    self.progressBar = None
+    self.tmpdir = None
+
+
   def setup(self):
     """
     Called when the user opens the module the first time and the widget is initialized.
     """
     ScriptedLoadableModuleWidget.setup(self)
+
+    self.logic = DCE_IDandPhaseSelectLogic(self.tmpdir)
+    self.server_url = "http://127.0.0.1:8000"
+    self.tmpdir = slicer.util.tempDirectory("slicer-monai-label")
+    self.client_id = "user-xyz"
+
 
     # Parameters Area
     #
@@ -282,224 +342,72 @@ class DCE_IDandPhaseSelectWidget(ScriptedLoadableModuleWidget):
     # Layout within the dummy collapsible button
     self.parametersFormLayout = qt.QFormLayout(parametersCollapsibleButton)
 
-    #Edit 2/11/2021: Moving exampath selection here
-    self.exampath = qt.QFileDialog.getExistingDirectory(0,("Select folder for DCE-MRI exam"))
+    # 服务器设置
+    self.serverSettingsGridLayout = qt.QGridLayout()
+    # 0,0
+    self.label = qt.QLabel("Python Server:")
+    self.serverSettingsGridLayout.addWidget(self.label, 0, 0, 1, 1)
+    # 0,1
+    self.serverComboBox = qt.QComboBox()
+    self.serverComboBox.setEditable(True)
+    self.serverComboBox.setObjectName("serverComboBox")
+    self.serverSettingsGridLayout.addWidget(self.serverComboBox, 0, 1, 1, 6)
+    # 0,2
+    self.fetchServerInfoButton = qt.QPushButton()
+    self.fetchServerInfoButton.setEnabled(True)
+    self.fetchServerInfoButton.setText("")
+    self.fetchServerInfoButton.setObjectName("fetchServerInfoButton")
+    self.serverSettingsGridLayout.addWidget(self.fetchServerInfoButton, 0, 7, 1, 1)
+    # 1,0
+    self.label_3 = qt.QLabel("App Name:")
+    self.label_3.setObjectName("label_3")
+    self.serverSettingsGridLayout.addWidget(self.label_3, 1, 0, 1, 1)
+    # 1,1
+    self.appComboBox = qt.QComboBox()
+    self.appComboBox.setObjectName("appComboBox")
+    self.serverSettingsGridLayout.addWidget(self.appComboBox, 1, 1, 1, 7)
 
-    #7/6/2021: Add code to convert mapped drive letter path
-    #to full path based on Andras Lasso's answer in Slicer forums.
-    if(':' in self.exampath and 'C:' not in self.exampath):
-      self.exampath = str(pathlib.Path(self.exampath).resolve().as_posix())
-      print(self.exampath)
+    self.parametersFormLayout.addRow(self.serverSettingsGridLayout)
 
-    #Edit 2/17/2021: Moving code to read exam details from exampath here.
-    #As part of this, need to include visitstr as an input to run function
-    #find indices where slashes '/' occur in exampath
-    slashinds = []
-    for i in range(len(self.exampath)):
-      if(self.exampath[i] == '/'):
-        slashinds.append(i)
+    # Set icons and tune widget properties
+    self.serverComboBox.lineEdit().setPlaceholderText("enter server address or leave empty to use default")
+    self.fetchServerInfoButton.setIcon(self.icon("refresh-icon.png"))
+    # Connections
+    self.fetchServerInfoButton.connect("clicked(bool)", self.onClickFetchInfo)
+    # self.serverComboBox.connect("currentIndexChanged(int)", self.onClickFetchInfo)
 
-    #If using full path instead of mapped drives
-##    else:
-    #6/28/2021: Make this code compatible with
-    #directory structures that are different from
-    #our MR exam directories on \\researchfiles.radiology.ucsf.edu
-    if('//researchfiles' in self.exampath and ('ispy2' in self.exampath or 'ispy_2019' in self.exampath or 'acrin_6698' in self.exampath) ):
-      #study folder name is between the 4th and 5th slashes
-      self.studystr = self.exampath[(int(slashinds[3])+1):int(slashinds[4])]
-      #Correction: ispy_2019 disk contains exams that belong to ispy2 study
-      if(self.studystr == 'ispy_2019'):
-        self.studystr = 'ispy2'
-      #site folder name is between the 5th and 6th slashes
-      self.sitestr = self.exampath[(int(slashinds[4])+1):int(slashinds[5])]
-      #ISPY ID folder name is between the 6th and 7th slashes
-      self.idstr = self.exampath[(int(slashinds[5])+1):int(slashinds[6])]
-      self.idpath = self.exampath[0:int(slashinds[6])] #full path to ispy id folder
-      #folder with visit name in it is between the 7th and 8th slashes
-      self.visitstr = self.exampath[(int(slashinds[6])+1):int(slashinds[7])]
-    else:
-      #6/28/2021: Read info from DICOM header instead of
-      #directory for 'generic' exams with other directory structures
-      folders = [directory for directory in os.listdir(self.exampath) if os.path.isdir(os.path.join(self.exampath,directory))]
-      dcm_folder_found = 0
-      for i in range(len(folders)):
-        curr_path = os.path.join(self.exampath,folders[i])
-        curr_files = [f for f in os.listdir(curr_path) if f.endswith('.dcm')]
-        curr_FILES = [f for f in os.listdir(curr_path) if f.endswith('.DCM')]
-        files_noext = [f for f in os.listdir(curr_path) if f.isdigit()]
 
-        if(len(curr_files) > 2):
-          dcm1path = os.path.join(curr_path,curr_files[0])
-          dcm_folder_found = 1
-
-        if(len(curr_FILES) > 2):
-          dcm1path = os.path.join(curr_path,curr_FILES[0])
-          dcm_folder_found = 1
-
-        if(len(files_noext) > 2):
-          dcm1path = os.path.join(curr_path,files_noext[0])
-          dcm_folder_found = 1
-
-        if(dcm_folder_found == 1):
-          hdr_dcm1 = pydicom.dcmread(dcm1path,stop_before_pixels = True, force = True)
-          try:
-            self.studystr = hdr_dcm1[0x12,0x10].value #Clinical Trial Sponsor Name
-          except:
-            try:
-              self.studystr = hdr_dcm1[0x8,0x1030].value #Study Description
-            except:
-              self.studystr = 'Trial Name Unknown'
-
-          try:
-            self.sitestr = hdr_dcm1[0x12,0x31].value #Clinical Trial Site Name
-          except:
-            try:
-              self.sitestr = hdr_dcm1[0x8,0x80].value #Institution Name
-            except:
-              self.sitestr = 'Site Unknown'
-
-          try:
-            self.idstr = hdr_dcm1[0x12,0x40].value #Clinical Trial Subject ID
-          except:
-            self.idstr = 'ID Unknown'
-
-          try:
-            self.visitstr = hdr_dcm1[0x12,0x50].value #Clinical Trial Time Point ID
-            #7/4/2021: Try to use directory structure if visit number not found
-            #in Clinical Trial Time Point id header field
-            if('1' not in self.visitstr and '2' not in self.visitstr and '3' not in self.visitstr and '4' not in self.visitstr and '5' not in self.visitstr):
-              #6/29/2021: Default to 'Visit unknown',
-              #change this if visit is found in exampath
-              self.visitstr = 'Visit unknown'
-              if('v10' in self.exampath):
-                self.visitstr = 'MR1'
-
-              if('v20' in self.exampath):
-                self.visitstr = 'MR2'
-
-              if('v30' in self.exampath):
-                self.visitstr = 'MR3'
-
-              if('v40' in self.exampath):
-                self.visitstr = 'MR4'
-
-          except:
-            #6/29/2021: Default to 'Visit unknown',
-            #change this is visit is found in exampath
-            self.visitstr = 'Visit unknown'
-            if('v10' in self.exampath):
-              self.visitstr = 'MR1'
-
-            if('v20' in self.exampath):
-              self.visitstr = 'MR2'
-
-            if('v30' in self.exampath):
-              self.visitstr = 'MR3'
-
-            if('v40' in self.exampath):
-              self.visitstr = 'MR4'
-
-    #7/26/2021: If this step fails, DICOMs in exam directory are compressed.
-    try:
-      print(self.exampath)
-      print(self.studystr)
-      print(self.sitestr)
-      print(self.idstr)
-      print(self.visitstr)
-    except:
-      slicer.util.confirmOkCancelDisplay("Error. Please decompress all files in exam directory, then try running module again.","Compressed DICOMs Error")
-
-    #7/16/2021: Force side-by-side axial-sagittal layout immediately after
-    #processing user's MR study selection.
-    slicer.app.layoutManager().setLayout(slicer.vtkMRMLLayoutNode.SlicerLayoutSideBySideView)
+    # 导入/载入按钮
+    hlayout = qt.QHBoxLayout()
+    self.loadNewButton = qt.QPushButton("导入新的")
+    self.loadNewButton.enabled = True
+    self.loadOldButton = qt.QPushButton("载入旧的")
+    self.loadOldButton.enabled = True
+    hlayout.addWidget(self.loadNewButton)
+    hlayout.addWidget(self.loadOldButton)
+    self.parametersFormLayout.addRow(hlayout)
+    self.loadNewButton.connect('clicked(bool)', self.onApplyLoadNewButton)
+    self.loadOldButton.connect('clicked(bool)', self.onApplyLoadOldButton)
 
     #7/6/2021: Add boxes to allow user to set early and late
     #post-contrast times
-    self.earlytimelbl = qt.QLabel("\nEarly Post-Contrast Time (seconds after contrast injection):")
-    self.parametersFormLayout.addRow(self.earlytimelbl)
+    self.earlytimelbl = qt.QLabel("Early Post-Contrast Time (seconds after contrast injection):")
     self.earlytime = qt.QSpinBox()
     self.earlytime.setMinimum(60)
     self.earlytime.setMaximum(180)
     self.earlytime.setSingleStep(15)
     self.earlytime.setValue(150) #set default value of 150 for earlytime spin box
     #set min and max possible values of 30 and 180 (seconds) for this spin box
-    self.parametersFormLayout.addRow(self.earlytime)
+    self.parametersFormLayout.addRow(self.earlytimelbl, self.earlytime)
 
-    self.latetimelbl = qt.QLabel("\nLate Post-Contrast Time (seconds after contrast injection):")
-    self.parametersFormLayout.addRow(self.latetimelbl)
+    self.latetimelbl = qt.QLabel("Late Post-Contrast Time (seconds after contrast injection):")
     self.latetime = qt.QSpinBox()
     self.latetime.setMinimum(210)
     self.latetime.setMaximum(510)
     self.latetime.setSingleStep(15)
     self.latetime.setValue(450) #set default value of 450 for earlytime spin box
     #set min and max possible values of 210 and 510 (seconds) for this spin box
-    self.parametersFormLayout.addRow(self.latetime)
-
-
-    if('ispy' in self.exampath or 'acrin' in self.exampath):
-      #position of v in visit string
-      vpos = self.visitstr.find('v')
-      #2/17/2021: Add exam details retrieved from exampath to DCE folder ID method selection menu.
-      visnum = self.visitstr[vpos:vpos+3]
-      visforlbl = 'Visit unknown'
-      if(visnum == 'v10'):
-        visforlbl = 'MR1'
-
-      if(visnum == 'v20'):
-        visforlbl = 'MR2'
-
-      if(visnum == 'v25'):
-        visforlbl = 'MR2.5'
-
-      if(visnum == 'v30'):
-        visforlbl = 'MR3'
-
-      if(visnum == 'v40'):
-        visforlbl = 'MR4'
-
-      if(visnum == 'v50'):
-        visforlbl = 'MR5'
-
-      self.examlbl = "Choose Preferred Method of DCE Series ID for " + self.sitestr[5:] + " " + self.idstr + " " + visforlbl
-    else:
-      visnum = self.visitstr
-      visforlbl = 'Visit unknown'
-
-      if(visnum == 'v10'):
-        visforlbl = 'MR1'
-
-      if(visnum == 'v20'):
-        visforlbl = 'MR2'
-
-      if(visnum == 'v25'):
-        visforlbl = 'MR2.5'
-
-      if(visnum == 'v30'):
-        visforlbl = 'MR3'
-
-      if(visnum == 'v40'):
-        visforlbl = 'MR4'
-
-      if(visnum == 'v50'):
-        visforlbl = 'MR5'
-
-      self.examlbl = "Choose Preferred Method of DCE Series ID for " + self.sitestr + " " + self.idstr + " " + visforlbl
-
-    #2/11/2021: Adding interface to allow user to choose between manual and automatic folder ID
-    self.DCE_ID_choose = qt.QLabel()
-    self.DCE_ID_choose.setText(self.examlbl)
-    self.parametersFormLayout.addRow(self.DCE_ID_choose)
-
-    #2/11/2021: Adding checkbox for user to select automatic DCE folder ID
-    self.autoIdCheckBox = qt.QCheckBox("Automatic")
-    self.autoIdCheckBox.setChecked(False)
-    self.parametersFormLayout.addRow(self.autoIdCheckBox)
-
-
-    #2/11/2021: Adding checkbox for user to select manual DCE folder ID
-    self.manualIdCheckBox = qt.QCheckBox("Manual")
-    self.manualIdCheckBox.setChecked(False)
-    self.parametersFormLayout.addRow(self.manualIdCheckBox)
+    self.parametersFormLayout.addRow(self.latetimelbl, self.latetime)
 
     #2/12/2021: Adding button to submit manual DCE selections,
     #but don't actually show it unless user has selected manual option.
@@ -507,13 +415,13 @@ class DCE_IDandPhaseSelectWidget(ScriptedLoadableModuleWidget):
     self.manualSubmitButton.setStyleSheet("margin-left:50%; margin-right:50%;") #Center align the done button for the DCE folder checkboxes
     self.manualSubmitButton.toolTip = "Submit manual DCE folder selections."
     self.manualSubmitButton.enabled = True
-
-    # connections
-##    self.applyButton.connect('clicked(bool)', self.onApplyButton)
-    self.autoIdCheckBox.stateChanged.connect(self.onApplyButton) #2/11/2021: connect checking the auto folder ID box to onApplyButton function
-    self.manualIdCheckBox.stateChanged.connect(self.manualDCESelectMenu) #2/11/2021: connect checking the manual folder ID box to function
-                                                                         #for creating (or removing) manual DCE folder selection menu.
+    # self.parametersFormLayout.addRow(self.manualSubmitButton)
     self.manualSubmitButton.connect('clicked(bool)',self.onApplyButton)
+
+    self.uploadImageButton = qt.QPushButton("上传")
+    self.uploadImageButton.enabled = True
+    self.parametersFormLayout.addRow(self.uploadImageButton)
+    self.uploadImageButton.connect('clicked(bool)', self.onUploadImage)
 
     # Add vertical spacer
     self.layout.addStretch(1)
@@ -575,22 +483,22 @@ class DCE_IDandPhaseSelectWidget(ScriptedLoadableModuleWidget):
 
 
     #Code for removing the manual DCE folder selection menu when Manual checkbox is unselected
-    if(self.manualIdCheckBox.isChecked() == False):
-      self.parametersFormLayout.removeRow(self.listLabel)
-
-      for jjj in range(len(self.img_folders)):
-        self.parametersFormLayout.removeRow(self.listCheckBox[jjj])
-
-      self.parametersFormLayout.removeRow(self.manualSubmitButton)
+    # if(self.manualIdCheckBox.isChecked() == False):
+    #   self.parametersFormLayout.removeRow(self.listLabel)
+    #
+    #   for jjj in range(len(self.img_folders)):
+    #     self.parametersFormLayout.removeRow(self.listCheckBox[jjj])
+    #
+    #   self.parametersFormLayout.removeRow(self.manualSubmitButton)
 
 
   def onApplyButton(self):
     logic = DCE_IDandPhaseSelectLogic()
 
-    if(self.autoIdCheckBox.isChecked() == True):
-      self.dce_folders_manual = []
-      self.dce_ind_manual = []
-      logic.run(self.exampath,self.dce_folders_manual,self.dce_ind_manual,self.visitstr,self.earlytime.value,self.latetime.value)
+    # if(self.autoIdCheckBox.isChecked() == True):
+    #   self.dce_folders_manual = []
+    #   self.dce_ind_manual = []
+    #   logic.run(self.exampath,self.dce_folders_manual,self.dce_ind_manual,self.visitstr,self.earlytime.value,self.latetime.value)
 
     if(self.manualIdCheckBox.isChecked() == True):
       for mmm in range(len(self.img_folders)):
@@ -600,6 +508,340 @@ class DCE_IDandPhaseSelectWidget(ScriptedLoadableModuleWidget):
       print("Manually selected DCE folders are")
       print(self.dce_folders_manual)
       logic.run(self.exampath,self.dce_folders_manual,self.dce_ind_manual,self.visitstr,self.earlytime.value,self.latetime.value)
+
+  def onUploadImage(self):
+    # image_id = ''.join(self.idstr.split())
+    image_id = self.idstr
+    try:
+      qt.QApplication.setOverrideCursor(qt.Qt.WaitCursor)
+      for index, volumeNode in enumerate(slicer.mrmlScene.GetNodesByClass("vtkMRMLScalarVolumeNode")):
+        in_file = tempfile.NamedTemporaryFile(suffix=self.file_ext, dir=self.tmpdir).name
+        self.reportProgress((index + 1)*30)
+        start = time.time()
+        slicer.util.saveNode(volumeNode, in_file)
+        logging.info(f"Saved Input Node into {in_file} in {time.time() - start:3.1f}s")
+        if index == 0:
+          self.logic.upload_image(in_file, image_id)
+        elif index == 2:
+          self.logic.upload_image(in_file, image_id, "early_contrast")
+        else:
+          self.logic.upload_image(in_file, image_id, "lately_contrast")
+        self.reportProgress((index + 1) * 30)
+      self.reportProgress(100)
+      qt.QApplication.restoreOverrideCursor()
+      return True
+    except:
+      self.reportProgress(100)
+      qt.QApplication.restoreOverrideCursor()
+      slicer.util.errorDisplay("Failed to upload volume to Server", detailedText=traceback.format_exc())
+      return False
+
+  def reportProgress(self, progressPercentage):
+    if not self.progressBar:
+      self.progressBar = slicer.util.createProgressDialog(windowTitle="Wait...", maximum=100)
+    self.progressBar.show()
+    self.progressBar.activateWindow()
+    self.progressBar.setValue(progressPercentage)
+    slicer.app.processEvents()
+
+  def onApplyLoadNewButton(self):
+    # Edit 2/11/2021: Moving exampath selection here
+    self.exampath = qt.QFileDialog.getExistingDirectory(0, ("Select folder for DCE-MRI exam"))
+
+    # 7/6/2021: Add code to convert mapped drive letter path
+    # to full path based on Andras Lasso's answer in Slicer forums.
+    if (':' in self.exampath and 'C:' not in self.exampath):
+      self.exampath = str(pathlib.Path(self.exampath).resolve().as_posix())
+      print(self.exampath)
+
+    # Edit 2/17/2021: Moving code to read exam details from exampath here.
+    # As part of this, need to include visitstr as an input to run function
+    # find indices where slashes '/' occur in exampath
+    slashinds = []
+    for i in range(len(self.exampath)):
+      if (self.exampath[i] == '/'):
+        slashinds.append(i)
+
+    # If using full path instead of mapped drives
+    ##    else:
+    # 6/28/2021: Make this code compatible with
+    # directory structures that are different from
+    # our MR exam directories on \\researchfiles.radiology.ucsf.edu
+    if ('//researchfiles' in self.exampath and (
+            'ispy2' in self.exampath or 'ispy_2019' in self.exampath or 'acrin_6698' in self.exampath)):
+      # study folder name is between the 4th and 5th slashes
+      self.studystr = self.exampath[(int(slashinds[3]) + 1):int(slashinds[4])]
+      # Correction: ispy_2019 disk contains exams that belong to ispy2 study
+      if (self.studystr == 'ispy_2019'):
+        self.studystr = 'ispy2'
+      # site folder name is between the 5th and 6th slashes
+      self.sitestr = self.exampath[(int(slashinds[4]) + 1):int(slashinds[5])]
+      # ISPY ID folder name is between the 6th and 7th slashes
+      self.idstr = self.exampath[(int(slashinds[5]) + 1):int(slashinds[6])]
+      self.idpath = self.exampath[0:int(slashinds[6])]  # full path to ispy id folder
+      # folder with visit name in it is between the 7th and 8th slashes
+      self.visitstr = self.exampath[(int(slashinds[6]) + 1):int(slashinds[7])]
+    else:
+      # 6/28/2021: Read info from DICOM header instead of
+      # directory for 'generic' exams with other directory structures
+      folders = [directory for directory in os.listdir(self.exampath) if
+                 os.path.isdir(os.path.join(self.exampath, directory))]
+      dcm_folder_found = 0
+      for i in range(len(folders)):
+        curr_path = os.path.join(self.exampath, folders[i])
+        curr_files = [f for f in os.listdir(curr_path) if f.endswith('.dcm')]
+        curr_FILES = [f for f in os.listdir(curr_path) if f.endswith('.DCM')]
+        files_noext = [f for f in os.listdir(curr_path) if f.isdigit()]
+
+        if (len(curr_files) > 2):
+          dcm1path = os.path.join(curr_path, curr_files[0])
+          dcm_folder_found = 1
+
+        if (len(curr_FILES) > 2):
+          dcm1path = os.path.join(curr_path, curr_FILES[0])
+          dcm_folder_found = 1
+
+        if (len(files_noext) > 2):
+          dcm1path = os.path.join(curr_path, files_noext[0])
+          dcm_folder_found = 1
+
+        if (dcm_folder_found == 1):
+          hdr_dcm1 = pydicom.dcmread(dcm1path, stop_before_pixels=True, force=True)
+          try:
+            self.studystr = hdr_dcm1[0x12, 0x10].value  # Clinical Trial Sponsor Name
+          except:
+            try:
+              self.studystr = hdr_dcm1[0x8, 0x1030].value  # Study Description
+            except:
+              self.studystr = 'Trial Name Unknown'
+
+          try:
+            self.sitestr = hdr_dcm1[0x12, 0x31].value  # Clinical Trial Site Name
+          except:
+            try:
+              self.sitestr = hdr_dcm1[0x8, 0x80].value  # Institution Name
+            except:
+              self.sitestr = 'Site Unknown'
+
+          try:
+            # self.idstr = hdr_dcm1[0x12, 0x40].value  # Clinical Trial Subject ID
+            self.idstr = hdr_dcm1.PatientName.family_name+" "+hdr_dcm1.PatientID
+          except:
+            self.idstr = 'ID Unknown'
+
+          try:
+            self.visitstr = hdr_dcm1[0x12, 0x50].value  # Clinical Trial Time Point ID
+            # 7/4/2021: Try to use directory structure if visit number not found
+            # in Clinical Trial Time Point id header field
+            if (
+                    '1' not in self.visitstr and '2' not in self.visitstr and '3' not in self.visitstr and '4' not in self.visitstr and '5' not in self.visitstr):
+              # 6/29/2021: Default to 'Visit unknown',
+              # change this if visit is found in exampath
+              self.visitstr = 'Visit unknown'
+              if ('v10' in self.exampath):
+                self.visitstr = 'MR1'
+
+              if ('v20' in self.exampath):
+                self.visitstr = 'MR2'
+
+              if ('v30' in self.exampath):
+                self.visitstr = 'MR3'
+
+              if ('v40' in self.exampath):
+                self.visitstr = 'MR4'
+
+          except:
+            # 6/29/2021: Default to 'Visit unknown',
+            # change this is visit is found in exampath
+            self.visitstr = 'Visit unknown'
+            if ('v10' in self.exampath):
+              self.visitstr = 'MR1'
+
+            if ('v20' in self.exampath):
+              self.visitstr = 'MR2'
+
+            if ('v30' in self.exampath):
+              self.visitstr = 'MR3'
+
+            if ('v40' in self.exampath):
+              self.visitstr = 'MR4'
+
+    # 7/26/2021: If this step fails, DICOMs in exam directory are compressed.
+    try:
+      print(self.exampath)
+      print(self.studystr)
+      print(self.sitestr)
+      print(self.idstr)
+      print(self.visitstr)
+    except:
+      slicer.util.confirmOkCancelDisplay(
+        "Error. Please decompress all files in exam directory, then try running module again.",
+        "Compressed DICOMs Error")
+
+    # 7/16/2021: Force side-by-side axial-sagittal layout immediately after
+    # processing user's MR study selection.
+    slicer.app.layoutManager().setLayout(slicer.vtkMRMLLayoutNode.SlicerLayoutSideBySideView)
+
+    if ('ispy' in self.exampath or 'acrin' in self.exampath):
+      # position of v in visit string
+      vpos = self.visitstr.find('v')
+      # 2/17/2021: Add exam details retrieved from exampath to DCE folder ID method selection menu.
+      visnum = self.visitstr[vpos:vpos + 3]
+      visforlbl = 'Visit unknown'
+      if (visnum == 'v10'):
+        visforlbl = 'MR1'
+
+      if (visnum == 'v20'):
+        visforlbl = 'MR2'
+
+      if (visnum == 'v25'):
+        visforlbl = 'MR2.5'
+
+      if (visnum == 'v30'):
+        visforlbl = 'MR3'
+
+      if (visnum == 'v40'):
+        visforlbl = 'MR4'
+
+      if (visnum == 'v50'):
+        visforlbl = 'MR5'
+
+      self.examlbl = "Choose Preferred Method of DCE Series ID for " + self.sitestr[
+                                                                       5:] + " " + self.idstr + " " + visforlbl
+    else:
+      visnum = self.visitstr
+      visforlbl = 'Visit unknown'
+
+      if (visnum == 'v10'):
+        visforlbl = 'MR1'
+
+      if (visnum == 'v20'):
+        visforlbl = 'MR2'
+
+      if (visnum == 'v25'):
+        visforlbl = 'MR2.5'
+
+      if (visnum == 'v30'):
+        visforlbl = 'MR3'
+
+      if (visnum == 'v40'):
+        visforlbl = 'MR4'
+
+      if (visnum == 'v50'):
+        visforlbl = 'MR5'
+
+      self.examlbl = "Choose Preferred Method of DCE Series ID for " + self.sitestr + " " + self.idstr + " " + visforlbl
+
+      # 2/11/2021: Adding interface to allow user to choose between manual and automatic folder ID
+    self.DCE_ID_choose = qt.QLabel()
+    self.DCE_ID_choose.setText(self.examlbl)
+    self.parametersFormLayout.addRow(self.DCE_ID_choose)
+
+    # #2/11/2021: Adding checkbox for user to select automatic DCE folder ID
+    # self.autoIdCheckBox = qt.QCheckBox("Automatic")
+    # self.autoIdCheckBox.setChecked(False)
+    # self.parametersFormLayout.addRow(self.autoIdCheckBox)
+    # self.autoIdCheckBox.stateChanged.connect(self.onApplyButton) #2/11/2021: connect checking the auto folder ID box to onApplyButton function
+
+    # 2/11/2021: Adding checkbox for user to select manual DCE folder ID
+    self.manualIdCheckBox = qt.QCheckBox("Manual")
+    self.manualIdCheckBox.setChecked(True)
+    # self.parametersFormLayout.addRow(self.manualIdCheckBox)
+    self.manualIdCheckBox.stateChanged.connect(
+      self.manualDCESelectMenu)  # 2/11/2021: connect checking the manual folder ID box to function
+    # for creating (or removing) manual DCE folder selection menu.
+
+    self.manualDCESelectMenu()
+
+  def onApplyLoadOldButton(self):
+    self.searchContentLabel = qt.QLabel("请输入病例名称和编号（例如：CAI GUI E 165299）:")
+    self.searchContentEdit = qt.QLineEdit()
+    self.parametersFormLayout.addRow(self.searchContentLabel, self.searchContentEdit)
+
+  def icon(self, name="MONAILabel.png"):
+    # It should not be necessary to modify this method
+    iconPath = os.path.join(os.path.dirname(__file__), "Resources", "Icons", name)
+    if os.path.exists(iconPath):
+      return qt.QIcon(iconPath)
+    return qt.QIcon()
+
+  def updateServerUrlGUIFromSettings(self):
+    # Save current server URL to the top of history
+    settings = qt.QSettings()
+    serverUrlHistory = settings.value("MONAILabel/serverUrlHistory")
+
+    wasBlocked = self.serverComboBox.blockSignals(True)
+    self.serverComboBox.clear()
+    if serverUrlHistory:
+      self.serverComboBox.addItems(serverUrlHistory.split(";"))
+    self.serverComboBox.setCurrentText(settings.value("MONAILabel/serverUrl"))
+    self.serverComboBox.blockSignals(wasBlocked)
+
+  def onClickFetchInfo(self):
+    self.fetchInfo()
+
+  def fetchInfo(self, showInfo=False):
+    if not self.logic:
+      return
+
+    start = time.time()
+    try:
+      self.updateServerSettings()
+    except:
+      slicer.util.errorDisplay(
+        "Failed to fetch models from remote server. "
+        "Make sure server address is correct and <server_uri>/info/ "
+        "is accessible in browser",
+        detailedText=traceback.format_exc(),
+      )
+      return
+
+  def updateServerSettings(self):
+    self.logic.setServer(self.serverUrl())
+    self.logic.setClientId(slicer.util.settingsValue("MONAILabel/clientId", "user-xyz"))
+    self.saveServerUrl()
+
+  def serverUrl(self):
+    serverUrl = self.serverComboBox.currentText
+    if not serverUrl:
+      serverUrl = "http://127.0.0.1:8000"
+    return serverUrl.rstrip("/")
+
+  def saveServerUrl(self):
+    # Save selected server URL
+    settings = qt.QSettings()
+    serverUrl = self.serverComboBox.currentText
+    settings.setValue("MONAILabel/serverUrl", serverUrl)
+
+    # Save current server URL to the top of history
+    serverUrlHistory = settings.value("MONAILabel/serverUrlHistory")
+    if serverUrlHistory:
+      serverUrlHistory = serverUrlHistory.split(";")
+    else:
+      serverUrlHistory = []
+    try:
+      serverUrlHistory.remove(serverUrl)
+    except ValueError:
+      pass
+
+    serverUrlHistory.insert(0, serverUrl)
+    serverUrlHistory = serverUrlHistory[:10]  # keep up to first 10 elements
+    settings.setValue("MONAILabel/serverUrlHistory", ";".join(serverUrlHistory))
+
+    self.updateServerUrlGUIFromSettings()
+
+  def updateServerUrlGUIFromSettings(self):
+    # Save current server URL to the top of history
+    settings = qt.QSettings()
+    serverUrlHistory = settings.value("MONAILabel/serverUrlHistory")
+
+    wasBlocked = self.serverComboBox.blockSignals(True)
+    self.serverComboBox.clear()
+    if serverUrlHistory:
+      self.serverComboBox.addItems(serverUrlHistory.split(";"))
+    self.serverComboBox.setCurrentText(settings.value("MONAILabel/serverUrl"))
+    self.serverComboBox.blockSignals(wasBlocked)
+
 #
 # DCE_IDandPhaseSelectLogic
 #
@@ -613,14 +855,23 @@ class DCE_IDandPhaseSelectLogic(ScriptedLoadableModuleLogic):
   Uses ScriptedLoadableModuleLogic base class, available at:
   https://github.com/Slicer/Slicer/blob/master/Base/Python/slicer/ScriptedLoadableModule.py
   """
+  def __init__(self, tmpdir=None, server_url=None, client_id=None):
+      ScriptedLoadableModuleLogic.__init__(self)
+
+      self.server_url = server_url
+      self.tmpdir = slicer.util.tempDirectory("slicer-monai-label") if tmpdir is None else tmpdir
+      self.client_id = client_id
+
+  def setServer(self, server_url=None):
+    self.server_url = server_url if server_url else "http://127.0.0.1:8000"
+
+  def setClientId(self, client_id):
+    self.client_id = client_id if client_id else "user-xyz"
 
   def run(self,exampath,dce_folders_manual,dce_ind_manual,visitstr,earlyadd,lateadd):
     """
     Run the actual algorithm
     """
-
-
-
 ##    if not self.isValidInputOutputData(outputVolume):
 ##      #slicer.util.errorDisplay('Input volume is the same as output volume. Choose a different output volume.')
 ##      return False
@@ -676,11 +927,14 @@ class DCE_IDandPhaseSelectLogic(ScriptedLoadableModuleLogic):
     print("All images loaded to Slicer")
     return True
 
+  def upload_image(self, image_in, image_id=None, tag=""):
+    return PhaseSelectClient(self.server_url, self.tmpdir, self.client_id).upload_image(image_in, image_id, tag=tag)
+
 
 class FTVtest4Test(ScriptedLoadableModuleTest):
   """
   This is the test case for your scripted module.
-  Uses ScriptedLoadableModuleTest base class, available at:
+  Uses ScriptedLoadableModuleTsplitest base class, available at:
   https://github.com/Slicer/Slicer/blob/master/Base/Python/slicer/ScriptedLoadableModule.py
   """
 
