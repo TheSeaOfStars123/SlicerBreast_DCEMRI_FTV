@@ -105,6 +105,7 @@ from Breast_DCEMRI_FTV_plugins2 import ftv_plots
 from Breast_DCEMRI_FTV_plugins2 import create2DimgAllFunctions
 from Breast_DCEMRI_FTV_plugins2 import ident_gzipped_exam
 from Breast_DCEMRI_FTV_plugins2 import gzip_gunzip_pyfuncs
+from Breast_DCEMRI_FTV_plugins2 import read_DCE_images_to_numpy
 
 
 #Function that outputs the numpy image stored in a vtkMRMLScalarVolumeNode
@@ -242,10 +243,11 @@ class DCE_TumorMapProcessWidget(ScriptedLoadableModuleWidget):
 
     #Edit 7/28/2020: Try reading exampath from parameter node created in 1st module
     #instead of asking user to select folder again
-    #1. Retrieve node by name
-    exampath_node = slicer.util.getNode("path node")
-    #2. Read exampath from current node in pathSelector
-    self.exampath = exampath_node.GetParameter("exampath")
+    # #1. Retrieve node by name
+    # exampath_node = slicer.util.getNode("path node")
+    # #2. Read exampath from current node in pathSelector
+    # self.exampath = exampath_node.GetParameter("exampath")
+    self.exampath = settings.value("MONAILABEL/examPath")
 
     #Edit 7/29/2020: Adding exampath parsing code from createSubtractionsAndMIPs here
 
@@ -271,7 +273,7 @@ class DCE_TumorMapProcessWidget(ScriptedLoadableModuleWidget):
     #7/9/2021: Make this path part independent of computer & directory
     #code is stored in.
     extension_path = os.path.join( os.path.dirname( __file__ ), '..' )
-    wkspc_savepath = os.path.join(extension_path,'current_exam_workspace.pickle')
+    wkspc_savepath = os.path.join(self.exampath,'current_exam_workspace.pickle')
     with open(wkspc_savepath,'rb') as f:
       self.tempres, self.all_folders_info, self.dce_folders, self.dce_ind, self.fsort, self.studydate, self.nslice, self.earlyPostContrastNum, self.latePostContrastNum, self.earlydiffmm, self.earlydiffss, self.latediffmm, self.latediffss = pickle.load(f)
 
@@ -585,7 +587,17 @@ class DCE_TumorMapProcessWidget(ScriptedLoadableModuleWidget):
         precontraststr = self.visitstr + " pre-contrast"
         self.a = getNPImgFromNode(precontraststr)
     except:
-      print("pre-contrast with unknown visit doesn't exist")
+        # 重新add pre-contrast Node
+        apath = os.path.join(self.exampath, str(self.dce_folders[0]))
+        m, a = read_DCE_images_to_numpy.readInputToNumpy(apath)
+        # create node for displaying pre-contrast image
+        adisp = np.transpose(a, (2, 1,
+                                 0))  # nii needs x,y,z to have same orientation as DICOM, but for numpy array you need to return to dimension order z,y,x
+        precontrast_node = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLScalarVolumeNode",
+                                                              precontraststr)  # add this image to dropdown node with name precontrast
+        slicer.util.updateVolumeFromArray(precontrast_node, adisp)
+        precontrast_node.SetRASToIJKMatrix(m)
+        print("pre-contrast with unknown visit doesn't exist")
 
     #Edit 11/6/2020: Repeat part of updateSlicePrint code here because apparently just calling the function without connecting it to slice scrolling doesn't work
     layoutManager = slicer.app.layoutManager()
@@ -1610,8 +1622,11 @@ class DCE_TumorMapProcessWidget(ScriptedLoadableModuleWidget):
 
     #Edit 9/30/2020: For report, window and level should always be adjusted upward compared to what is used for displaying image in Slicer
     #Still getting black images for some exams. Try multiplying by 2 and 2.5 instead of adding 2500 and 3000
-    window_report = self.window*2
-    level_report = self.window*2.5
+    # window_report = self.window*2
+    # level_report = self.level*2.5
+
+    window_report = self.window
+    level_report = self.level
 
     #Edit 10/6/2020: retrieve threshold values from spin boxes and use them for tumor mask calculations for report
     print("threshold values")

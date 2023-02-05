@@ -143,7 +143,7 @@ def loadPreEarlyLate(exampath,visitnum,orig,dce_folders_manual,dce_ind_manual,ea
     #7/9/2021: Make this path part independent of computer & directory
     #code is stored in.
     extension_path = os.path.join( os.path.dirname( __file__ ), '..' )
-    wkspc_savepath = os.path.join(extension_path,'current_exam_workspace.pickle')
+    wkspc_savepath = os.path.join(exampath,'current_exam_workspace.pickle')
     with open(wkspc_savepath,'wb') as f:
       pickle.dump([tempres, all_folders_info, dce_folders, dce_ind, fsort, studydate, nslice, earlyPostContrastNum, latePostContrastNum, earlydiffmm, earlydiffss, latediffmm, latediffss],f)
 
@@ -411,16 +411,15 @@ class DCE_IDandPhaseSelectWidget(ScriptedLoadableModuleWidget):
 
     #2/12/2021: Adding button to submit manual DCE selections,
     #but don't actually show it unless user has selected manual option.
+
+    hlayout2 = qt.QHBoxLayout()
     self.manualSubmitButton = qt.QPushButton("Done")
-    self.manualSubmitButton.setStyleSheet("margin-left:50%; margin-right:50%;") #Center align the done button for the DCE folder checkboxes
     self.manualSubmitButton.toolTip = "Submit manual DCE folder selections."
     self.manualSubmitButton.enabled = True
-    # self.parametersFormLayout.addRow(self.manualSubmitButton)
     self.manualSubmitButton.connect('clicked(bool)',self.onApplyButton)
 
     self.uploadImageButton = qt.QPushButton("上传")
     self.uploadImageButton.enabled = True
-    self.parametersFormLayout.addRow(self.uploadImageButton)
     self.uploadImageButton.connect('clicked(bool)', self.onUploadImage)
 
     # Add vertical spacer
@@ -478,8 +477,10 @@ class DCE_IDandPhaseSelectWidget(ScriptedLoadableModuleWidget):
         self.parametersFormLayout.addRow(self.listCheckBox[iii])
 
       #Finally, add button that will be used to submit the user's final DCE folder selections
-      self.parametersFormLayout.addRow(self.manualSubmitButton)
-
+      hlayout = qt.QHBoxLayout()
+      hlayout.addWidget(self.manualSubmitButton)
+      hlayout.addWidget(self.uploadImageButton)
+      self.parametersFormLayout.addRow(hlayout)
 
 
     #Code for removing the manual DCE folder selection menu when Manual checkbox is unselected
@@ -520,12 +521,12 @@ class DCE_IDandPhaseSelectWidget(ScriptedLoadableModuleWidget):
         start = time.time()
         slicer.util.saveNode(volumeNode, in_file)
         logging.info(f"Saved Input Node into {in_file} in {time.time() - start:3.1f}s")
-        if index == 0:
+        if index == 1:
           self.logic.upload_image(in_file, image_id)
-        elif index == 2:
-          self.logic.upload_image(in_file, image_id, "early_contrast")
+        elif index == 0:
+          self.logic.upload_image(in_file, image_id, "pre-contrast")
         else:
-          self.logic.upload_image(in_file, image_id, "lately_contrast")
+          self.logic.upload_image(in_file, image_id, "late post-contrast", param={"exam_path": self.exampath})
         self.reportProgress((index + 1) * 30)
       self.reportProgress(100)
       qt.QApplication.restoreOverrideCursor()
@@ -753,10 +754,22 @@ class DCE_IDandPhaseSelectWidget(ScriptedLoadableModuleWidget):
 
     self.manualDCESelectMenu()
 
-  def onApplyLoadOldButton(self):
+  def onApplyLoadOldButton(self, onStartSearchButtonButton=None):
     self.searchContentLabel = qt.QLabel("请输入病例名称和编号（例如：CAI GUI E 165299）:")
     self.searchContentEdit = qt.QLineEdit()
     self.parametersFormLayout.addRow(self.searchContentLabel, self.searchContentEdit)
+
+    self.startSearchButton = qt.QPushButton("Done")
+    self.startSearchButton.setStyleSheet(
+      "margin-left:50%; margin-right:50%;")
+    self.startSearchButton.toolTip = "开始搜索病例"
+    self.startSearchButton.enabled = True
+    self.parametersFormLayout.addRow(self.startSearchButton)
+    self.startSearchButton.connect('clicked(bool)', self.onStartSearchButtonButton)
+
+  def onStartSearchButtonButton(self):
+    settings = qt.QSettings()
+    settings.setValue("MONAILABEL/patientName", self.searchContentEdit.text)
 
   def icon(self, name="MONAILabel.png"):
     # It should not be necessary to modify this method
@@ -891,6 +904,11 @@ class DCE_IDandPhaseSelectLogic(ScriptedLoadableModuleLogic):
     else:
       exampath_node.SetParameter("exampath",exampath)
 
+    # 保存exampath到setting中
+    settings = qt.QSettings()
+    settings.setValue("MONAILabel/examPath", exampath)
+
+
     #Edit 2/12/21: Only do gunzip here if using automatic DCE folder ID.
     #If doing manual folder ID, gunzipping is already done.
     if(len(dce_folders_manual) == 0):
@@ -927,8 +945,8 @@ class DCE_IDandPhaseSelectLogic(ScriptedLoadableModuleLogic):
     print("All images loaded to Slicer")
     return True
 
-  def upload_image(self, image_in, image_id=None, tag=""):
-    return PhaseSelectClient(self.server_url, self.tmpdir, self.client_id).upload_image(image_in, image_id, tag=tag)
+  def upload_image(self, image_in, image_id=None, tag="", param={}):
+    return PhaseSelectClient(self.server_url, self.tmpdir, self.client_id).upload_image(image_in, image_id, tag=tag, params=param)
 
 
 class FTVtest4Test(ScriptedLoadableModuleTest):
