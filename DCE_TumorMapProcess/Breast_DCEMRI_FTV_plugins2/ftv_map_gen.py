@@ -171,3 +171,38 @@ def makeFTVMaps(exampath, manufacturer, dce_folders, roicenter,roiradius,omitcen
     return a,b,c,pe,ser,tumor_mask,voi_mask,zs,zf,ys,yf,xs,xf,pct,pre_thresh,pethresh,minconnpix
 
 
+def makeFTVMaps2(exampath, bbb_npimg, dce_folders, roicenter, roiradius, earlyPostContrastNum, latePostContrastNum):
+    print("Running make FTV maps")
+    # Loading pre-contrast image into numpy array
+    apath = os.path.join(exampath, str(dce_folders[0]))
+    m, a = read_DCE_images_to_numpy.readInputToNumpy(apath)
+    # Loading early post-contrast image into numpy array
+    print("-----EARLY POST-CONTRAST IMAGE-----")
+    m, b = read_DCE_images_to_numpy.earlyOrLateImgSelect(earlyPostContrastNum, dce_folders, exampath)
+
+    # function used to add an ROI or omit region to a voi_mask numpy array
+    def addToVOIMask(voi_mask, center, radius, maskval):
+        center = np.transpose(center)
+        radius = np.transpose(radius)
+        # first, get x,y,z range of region from its center and radius
+        xs = int(round(float(center[0]) - float(radius[0])))
+        xf = int(round(float(center[0]) + float(radius[0])))
+        ys = int(round(float(center[1]) - float(radius[1])))
+        yf = int(round(float(center[1]) + float(radius[1])))
+        zs = int(round(float(center[2]) - float(radius[2])))
+        zf = int(round(float(center[2]) + float(radius[2])))
+        voi_mask[xs:xf + 1, ys:yf + 1, zs:zf + 1] = maskval
+        return xs, xf, ys, yf, zs, zf, voi_mask
+    voi_mask = np.zeros(a.shape)
+    # add roi to voi mask
+    xs, xf, ys, yf, zs, zf, voi_mask = addToVOIMask(voi_mask, roicenter, roiradius, 1)
+    # Loading late post-contrast image into numpy array
+    print("-----LATE POST-CONTRAST IMAGE-----")
+    m, c = read_DCE_images_to_numpy.earlyOrLateImgSelect(latePostContrastNum, dce_folders, exampath)
+    ser = (b - a) / (c - a)
+    ser_mask = (ser >= 0)  # 4/28/21: Explicitly use SER>=0 for FTV definition
+    tumor_mask = bbb_npimg * ser_mask  # tumor segment #Edit 4/28/21: multiply by ser_mask too
+    tumor_mask = tumor_mask.astype('float64')  # Convert from bool to numeric to prevent NIFTI error
+    print("Done running make FTV maps")
+    return a, b, c, ser, tumor_mask, voi_mask, zs, zf, ys, yf, xs, xf
+

@@ -22,7 +22,7 @@
 #images from the MR exam, and other relevant information such as
 #imaging site, visit number, and exam date.
 
-def createPDFreport(gzipped,path,savenamepdf,tempres,fsort,manufacturer,dce_folders,nslice,earlyPostContrastNum,latePostContrastNum, earlydiffmm, earlydiffss, latediffmm, latediffss, preimg3d,img3d,ser,tumor_mask,voi_mask,xs,xf,ys,yf,zs,zf,omitCount,omitradii,omitcenters,pct,pre_thresh,pethresh,minconnpix,aff_mat,ijkToRASmat,nodevisstr,window,level,idstr):
+def createPDFreport(gzipped,path,savenamepdf,tempres,fsort,manufacturer,dce_folders,nslice,earlyPostContrastNum,latePostContrastNum, earlydiffmm, earlydiffss, latediffmm, latediffss, preimg3d,img3d,ser,tumor_mask,voi_mask,xs,xf,ys,yf,zs,zf,omitCount,omitradii,omitcenters,aff_mat,ijkToRASmat,nodevisstr,window,level,idstr):
     #note: although variable is called ser_colormap, may decide to use regular SER image instead so that colorbar shows true SER values
 
     #All of the figures (except ser colormap) are using 2nd post-contrast minus pre-contrast
@@ -522,13 +522,16 @@ def createPDFreport(gzipped,path,savenamepdf,tempres,fsort,manufacturer,dce_fold
     #roibounds
     roi = "ROI: [{},{},{}]:[{},{},{}]".format(xs,ys,zs,xf,yf,zf)
     #pe and min connected neighbors thresholds
-    pe_mnc = "PE/MNC Threshold: {}/{}".format(pethresh,minconnpix)
+    # pe_mnc = "PE/MNC Threshold: {}/{}".format(pethresh,minconnpix)
+    pe_mnc = "PE/MNC Threshold: {}/{}".format(00, 00)
 
     #Edit 6/12/2020: Use tempres from chooseEarlyLate code, which is already in seconds
     scanduration = "Scan Duration: " + str(round(float(tempres),1)) + " s"
 
     #pre-contrast threshold (voxel value and % of max (or 95%ile value) in ROI
-    gray_thresh = "Gray Threshold: {}/{}%".format(round(pre_thresh,1),100*pct)
+    # gray_thresh = "Gray Threshold: {}/{}%".format(round(pre_thresh,1),100*pct)
+    gray_thresh = "Gray Threshold: {}/{}%".format(00,00)
+
 
     #create strings that show FOV for each image
     ax_fovx = round(earlyslice1hdr.PixelSpacing[0]*img_ax_slc_wroi.shape[1]/10,2)

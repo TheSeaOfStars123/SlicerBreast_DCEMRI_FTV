@@ -541,6 +541,36 @@ class DCE_TumorMapProcessWidget(ScriptedLoadableModuleWidget):
     rows,cols,slices = img.GetDimensions()
     roicenter = np.array([int(rows/2),int(cols/2),int(slices/2)])
     roiradius = np.array([100,100,40])
+    segmentationNodes = slicer.util.getNodesByClass("vtkMRMLSegmentationNode")
+    bbb_segmentationNode = segmentationNodes[0]
+    bbb_segmentLabelmapNode = slicer.vtkMRMLLabelMapVolumeNode()
+    slicer.mrmlScene.AddNode(bbb_segmentLabelmapNode)
+    bbb_segmentIDs = vtk.vtkStringArray()
+    bbb_segmentIDs.InsertNextValue("mass")
+    slicer.modules.segmentations.logic().ExportSegmentsToLabelmapNode(bbb_segmentationNode, bbb_segmentIDs,
+                                                                      bbb_segmentLabelmapNode, inputVolume)
+    bbb_outputLabelmapVolumeArray = slicer.util.arrayFromVolume(bbb_segmentLabelmapNode)
+    self.bbb_npimg = np.transpose(bbb_outputLabelmapVolumeArray, (2, 1, 0))
+    if self.bbb_npimg.max() > 0:
+        def bbox2_3D(img):
+
+            r = np.any(img, axis=(1, 2))
+            c = np.any(img, axis=(0, 2))
+            z = np.any(img, axis=(0, 1))
+
+            rmin, rmax = np.where(r)[0][[0, -1]]
+            cmin, cmax = np.where(c)[0][[0, -1]]
+            zmin, zmax = np.where(z)[0][[0, -1]]
+            bound_arr = [rmin, rmax, cmin, cmax, zmin, zmax]
+            return bound_arr
+
+
+        bound_arr = bbox2_3D(self.bbb_npimg)  # [158 190 266 294 62 73]
+        roicenter = np.array([(bound_arr[0] + bound_arr[1]) / 2, (bound_arr[2] + bound_arr[3]) / 2,
+                                 (bound_arr[4] + bound_arr[5]) / 2])  # [174 280  67.5]
+        roiradius = np.array([np.abs(roicenter[0] - bound_arr[0]), np.abs(roicenter[1] - bound_arr[2]),
+                                 np.abs(roicenter[2] - bound_arr[4])]) # [16 14  5.5]
+
 
     inputVolume.GetDisplayNode().SetAutoWindowLevel(False) #Do this to prevent auto window leveling
     self.windowmin = inputVolume.GetDisplayNode().GetWindowLevelMin()
@@ -1641,7 +1671,7 @@ class DCE_TumorMapProcessWidget(ScriptedLoadableModuleWidget):
     #Edit 6/30/2020: no more imgReversed
     #Start the "run" section processing, using the final ROI selections
     logic = DCE_TumorMapProcessLogic()
-    logic.run(self.gzipped,self.exampath,self.inputSelector.currentNode(),self.roiradius,self.roicenter,self.omitCount,self.omitradii,self.omitcenters,ijkToRASmat,self.tempres, self.fsort, self.nslice, self.manufacturer, self.studydate, self.dce_folders, self.aff_mat, self.aff_inv_mat, self.earlyPostContrastNum, self.latePostContrastNum, self.earlydiffmm, self.earlydiffss, self.latediffmm, self.latediffss,self.sitestr,self.idstr,self.nodevisstr,window_report,level_report,pct,pethresh,minconnpix)
+    logic.run(self.gzipped,self.exampath,self.inputSelector.currentNode(),self.bbb_npimg,self.roiradius,self.roicenter,self.omitCount,self.omitradii,self.omitcenters,ijkToRASmat,self.tempres, self.fsort, self.nslice, self.manufacturer, self.studydate, self.dce_folders, self.aff_mat, self.aff_inv_mat, self.earlyPostContrastNum, self.latePostContrastNum, self.earlydiffmm, self.earlydiffss, self.latediffmm, self.latediffss,self.sitestr,self.idstr,self.nodevisstr,window_report,level_report,pct,pethresh,minconnpix)
 
   def addOmitRegion(self):
 
@@ -1987,6 +2017,7 @@ class DCE_TumorMapProcessWidget(ScriptedLoadableModuleWidget):
       #Edit 8/21/2020: code for evaluating if you should use existing segment node or make new one
       use_exist = 0
       if(hasattr(self,'segment_node')):
+          #len(slicer.util.getNodesByClass('vtkMRMLVectorVolumeNode'))
 
         roicentercp = np.round(self.roicenter)
         segroicentercp = np.round(self.segroicenter)
@@ -2023,6 +2054,7 @@ class DCE_TumorMapProcessWidget(ScriptedLoadableModuleWidget):
         #slicer.mrmlScene.RemoveNode(inputVolume)
 
         slicer.util.setSliceViewerLayers(foreground=self.segment_node,foregroundOpacity = self.fopac)
+        slicer.util.setSliceViewerLayers(background=inputVolume)
 
       #Otherwise, compute new SER colorization and display that
       else:
@@ -2105,7 +2137,8 @@ class DCE_TumorMapProcessWidget(ScriptedLoadableModuleWidget):
           pre_path = os.path.join(self.imagespath,str(pre_folder))
         #Otherwise, use exampath
         else:
-          a,b,c,pe,self.ser,tumor_mask,voi_mask,zs,zf,ys,yf,xs,xf,pct,pre_thresh,pethresh,minconnpix = ftv_map_gen.makeFTVMaps(self.exampath, self.manufacturer, self.dce_folders,self.roicenter,self.roiradius,self.omitcenters,self.omitradii, self.earlyPostContrastNum, self.latePostContrastNum,self.segbkgthresh,self.segpethresh,self.segmcthresh)
+          # a,b,c,pe,self.ser,tumor_mask,voi_mask,zs,zf,ys,yf,xs,xf,pct,pre_thresh,pethresh,minconnpix = ftv_map_gen.makeFTVMaps(self.exampath, self.manufacturer, self.dce_folders,self.roicenter,self.roiradius,self.omitcenters,self.omitradii, self.earlyPostContrastNum, self.latePostContrastNum,self.segbkgthresh,self.segpethresh,self.segmcthresh)
+          a,b,c,self.ser,tumor_mask,voi_mask,zs,zf,ys,yf,xs,xf = ftv_map_gen.makeFTVMaps2(self.exampath, self.bbb_npimg, self.dce_folders, self.roicenter, self.roiradius, self.earlyPostContrastNum, self.latePostContrastNum)
           #DICOM header path for pre-contrast image
           pre_path = os.path.join(self.exampath,str(pre_folder))
 
@@ -2235,7 +2268,7 @@ class DCE_TumorMapProcessWidget(ScriptedLoadableModuleWidget):
 
     #Edit 7/24/2020: If segmentLesion box is unchecked, remove vector volume
     else:
-      slicer.util.setSliceViewerLayers(foreground=None,foregroundOpacity = self.fopac) #check if this helps you get rid of glitch after removing SER color when there are multiple visits
+      slicer.util.setSliceViewerLayers(foreground=self.inputSelector.currentNode(),foregroundOpacity = self.fopac) #check if this helps you get rid of glitch after removing SER color when there are multiple visits
       #slicer.mrmlScene.RemoveNode(self.segment_node)
 
 
@@ -2319,7 +2352,7 @@ class DCE_TumorMapProcessLogic(ScriptedLoadableModuleLogic):
     return True
 
 
-  def run(self, gzipped, exampath, inputVolume,roiradius,roicenter,omitCount,omitradii,omitcenters,ijkToRASmat,tempres, fsort, nslice, manufacturer, studydate, dce_folders, aff_mat, aff_inv_mat, earlyPostContrastNum, latePostContrastNum, earlydiffmm, earlydiffss, latediffmm, latediffss,sitestr,idstr,nodevisstr,window,level,pct,pethresh,minconnpix):
+  def run(self, gzipped, exampath, inputVolume, bbb_npimg,roiradius,roicenter,omitCount,omitradii,omitcenters,ijkToRASmat,tempres, fsort, nslice, manufacturer, studydate, dce_folders, aff_mat, aff_inv_mat, earlyPostContrastNum, latePostContrastNum, earlydiffmm, earlydiffss, latediffmm, latediffss,sitestr,idstr,nodevisstr,window,level,pct,pethresh,minconnpix):
     """
     Run the processing algorithm.
     Can be used without GUI widget.
@@ -2369,7 +2402,8 @@ class DCE_TumorMapProcessLogic(ScriptedLoadableModuleLogic):
       imagespath = exampath
 
     #generate FTV processing outputs
-    a,b,c,pe,ser,tumor_mask,voi_mask,zs,zf,ys,yf,xs,xf,pct,pre_thresh,pethresh,minconnpix = ftv_map_gen.makeFTVMaps(imagespath, manufacturer, dce_folders,roicenter,roiradius,omitcenters,omitradii, earlyPostContrastNum, latePostContrastNum,pct,pethresh,minconnpix)
+    # a,b,c,pe,ser,tumor_mask,voi_mask,zs,zf,ys,yf,xs,xf,pct,pre_thresh,pethresh,minconnpix = ftv_map_gen.makeFTVMaps(imagespath, manufacturer, dce_folders,roicenter,roiradius,omitcenters,omitradii, earlyPostContrastNum, latePostContrastNum,pct,pethresh,minconnpix)
+    a, b, c, ser, tumor_mask, voi_mask, zs, zf, ys, yf, xs, xf = ftv_map_gen.makeFTVMaps2(imagespath, bbb_npimg,dce_folders,roicenter,roiradius,earlyPostContrastNum,latePostContrastNum)
 
     progressBar.value = 50
     progressBar.labelText = 'Computed PE, SER, and Tumor Mask'
@@ -2397,7 +2431,8 @@ class DCE_TumorMapProcessLogic(ScriptedLoadableModuleLogic):
 
     #generate report
     #Edit 6/30/2020: No more imgReversed
-    ftv_plots.createPDFreport(gzipped,exampath,savenamepdf,tempres,fsort,manufacturer,dce_folders,nslice,earlyPostContrastNum,latePostContrastNum, earlydiffmm, earlydiffss, latediffmm, latediffss, a,b,ser,tumor_mask,voi_mask,xs,xf,ys,yf,zs,zf,omitCount,omitradii,omitcenters,pct,pre_thresh,pethresh,minconnpix,aff_mat,ijkToRASmat,nodevisstr,window,level,idstr)
+    # ftv_plots.createPDFreport(gzipped,exampath,savenamepdf,tempres,fsort,manufacturer,dce_folders,nslice,earlyPostContrastNum,latePostContrastNum, earlydiffmm, earlydiffss, latediffmm, latediffss, a,b,ser,tumor_mask,voi_mask,xs,xf,ys,yf,zs,zf,omitCount,omitradii,omitcenters,pct,pre_thresh,pethresh,minconnpix,aff_mat,ijkToRASmat,nodevisstr,window,level,idstr)
+    ftv_plots.createPDFreport(gzipped,exampath,savenamepdf,tempres,fsort,manufacturer,dce_folders,nslice,earlyPostContrastNum,latePostContrastNum, earlydiffmm, earlydiffss, latediffmm, latediffss, a,b,ser,tumor_mask,voi_mask,xs,xf,ys,yf,zs,zf,omitCount,omitradii,omitcenters,aff_mat,ijkToRASmat,nodevisstr,window,level,idstr)
 
     #After report is created, delete gunzipped folder
     gzip_gunzip_pyfuncs.deleteGunzipped(exampath)
