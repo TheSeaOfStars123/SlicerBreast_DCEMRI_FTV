@@ -30,11 +30,15 @@
 
 
 import os
+import shutil
 import sys
 import unittest
+from collections import OrderedDict
+
 import vtk, qt, ctk, slicer
 from qt import *
 from slicer.ScriptedLoadableModule import *
+from slicer.util import VTKObservationMixin
 import logging
 import numpy as np
 import traceback
@@ -248,22 +252,19 @@ class DCE_IDandPhaseSelect(ScriptedLoadableModule):
 
   def __init__(self, parent):
     ScriptedLoadableModule.__init__(self, parent)
-    #Edit 7/10/2020: Change title that appears in Slicer to reflect fact that it only loads pre, early, and late images
-    self.parent.title = "Module 1: Load DCE Images"  # TODO: make this more human readable by adding spaces
-    self.parent.categories = ["FTV Segmentation"]  # TODO: set categories (folders where the module shows up in the module selector)
-    self.parent.dependencies = []  # TODO: add here list of module names that this module requires
-    self.parent.contributors = ["Rohan Nadkarni (UCSF Breast Imaging Research Group)"]  # TODO: replace with "Firstname Lastname (Organization)"
+    self.parent.title = "模块1：加载数据模块"
+    self.parent.categories = ["Breast PCR"]
+    self.parent.dependencies = []
+    self.parent.contributors = ["YaChen Zhao"]
     self.parent.helpText = """
-This is an example of scripted loadable module bundled in an extension.
-"""  # TODO: update with short description of the module
-    self.parent.helpText += self.getDefaultModuleDocumentationLink()  # TODO: verify that the default URL is correct or change it to the actual documentation
+Breast PCR Predictiton solution.
+"""
     self.parent.acknowledgementText = """
-This file was originally developed by Jean-Christophe Fillion-Robin, Kitware Inc., Andras Lasso, PerkLab,
-and Steve Pieper, Isomics, Inc. and was partially funded by NIH grant 3P41RR013218-12S1.
-"""  # TODO: replace with organization, grant and thanks.
+Developed by Institute of Software, Chinese Academy of Sciences. All rights reserved.
+"""
 
     # Additional initialization step after application startup is complete
-    slicer.app.connect("startupCompleted()", self.initializeAfterStartup)
+    # slicer.app.connect("startupCompleted()", self.initializeAfterStartup)
 
   def initializeAfterStartup(self):
     if not slicer.app.commandOptions().noMainWindow:
@@ -305,7 +306,7 @@ class PhaseSelectSettingPanel(ctk.ctkSettingsPanel):
 # DCE_IDandPhaseSelectWidget
 #
 
-class DCE_IDandPhaseSelectWidget(ScriptedLoadableModuleWidget):
+class DCE_IDandPhaseSelectWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
   """Uses ScriptedLoadableModuleWidget base class, available at:
   https://github.com/Slicer/Slicer/blob/master/Base/Python/slicer/ScriptedLoadableModule.py
   """
@@ -315,8 +316,15 @@ class DCE_IDandPhaseSelectWidget(ScriptedLoadableModuleWidget):
     Called when the user opens the module the first time and the widget is initialized.
     """
     ScriptedLoadableModuleWidget.__init__(self, parent)
+    VTKObservationMixin.__init__(self)  # needed for parameter node observation
+
     self.logic = None
+    self._parameterNode = None
+    self._updatingGUIFromParameterNode = False
+
+    self.simpleInfo = {}
     self.file_ext = ".nii"
+
     self.progressBar = None
     self.tmpdir = None
 
@@ -327,14 +335,10 @@ class DCE_IDandPhaseSelectWidget(ScriptedLoadableModuleWidget):
     """
     ScriptedLoadableModuleWidget.setup(self)
 
-    self.logic = DCE_IDandPhaseSelectLogic(self.tmpdir)
-    self.server_url = "http://127.0.0.1:8000"
     self.tmpdir = slicer.util.tempDirectory("slicer-monai-label")
-    self.client_id = "user-xyz"
-
+    self.logic = DCE_IDandPhaseSelectLogic(self.tmpdir)
 
     # Parameters Area
-    #
     parametersCollapsibleButton = ctk.ctkCollapsibleButton()
     parametersCollapsibleButton.text = "Parameters"
     self.layout.addWidget(parametersCollapsibleButton)
@@ -373,8 +377,7 @@ class DCE_IDandPhaseSelectWidget(ScriptedLoadableModuleWidget):
     self.serverComboBox.lineEdit().setPlaceholderText("enter server address or leave empty to use default")
     self.fetchServerInfoButton.setIcon(self.icon("refresh-icon.png"))
     # Connections
-    self.fetchServerInfoButton.connect("clicked(bool)", self.onClickFetchInfo)
-    # self.serverComboBox.connect("currentIndexChanged(int)", self.onClickFetchInfo)
+    self.fetchServerInfoButton.connect("clicked(bool)", self.onClickFetchSimpleInfo)
 
 
     # 导入/载入按钮
@@ -416,7 +419,7 @@ class DCE_IDandPhaseSelectWidget(ScriptedLoadableModuleWidget):
     self.manualSubmitButton = qt.QPushButton("Done")
     self.manualSubmitButton.toolTip = "Submit manual DCE folder selections."
     self.manualSubmitButton.enabled = True
-    self.manualSubmitButton.connect('clicked(bool)',self.onApplyButton)
+    self.manualSubmitButton.connect('clicked(bool)', self.onApplyButton)
 
     self.uploadImageButton = qt.QPushButton("上传")
     self.uploadImageButton.enabled = True
@@ -425,8 +428,48 @@ class DCE_IDandPhaseSelectWidget(ScriptedLoadableModuleWidget):
     # Add vertical spacer
     self.layout.addStretch(1)
 
+    # other function
+    self.updateServerUrlGUIFromSettings()  # 加载Panel中服务器历史地址到GUI界面供下拉选择
+    self.onClickFetchSimpleInfo()
+    self.initializeParameterNode()
+
+
   def cleanup(self):
-    pass
+    print("cleanuping1...")
+    self.removeObservers()
+    shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+  def enter(self):
+    print("Entering1...")
+
+  def exit(self):
+    print("Exiting1...")
+    self.removeObserver(self._parameterNode, vtk.vtkCommand.ModifiedEvent, self.updateGUIFromParameterNode)
+
+  def onSceneStartClose(self, caller, event):
+    print("onSceneStartClose...")
+
+  def onSceneEndClose(self, caller, event):
+    if self.parent.isEntered:
+      self.initializeParameterNode()
+
+  def onSceneEndImport(self, caller, event):
+    print("onSceneEndImport...")
+
+  def initializeParameterNode(self):
+    self.setParameterNode(self.logic.getParameterNode())
+
+  # 如果由一个新输入的inputParameterNode
+  def setParameterNode(self, inputParameterNode):
+    if self._parameterNode is not None:
+      self.removeObserver(self._parameterNode, vtk.vtkCommand.ModifiedEvent, self.updateGUIFromParameterNode)
+    self._parameterNode = inputParameterNode
+    if self._parameterNode is not None:
+      self.addObserver(self._parameterNode, vtk.vtkCommand.ModifiedEvent, self.updateGUIFromParameterNode)
+
+    # Initial GUI update
+    self.updateGUIFromParameterNode()
+
 
   #2/11/2021: New function to create or remove manual DCE selection menu.
   def manualDCESelectMenu(self):
@@ -778,6 +821,12 @@ class DCE_IDandPhaseSelectWidget(ScriptedLoadableModuleWidget):
       return qt.QIcon(iconPath)
     return qt.QIcon()
 
+  def serverUrl(self):
+    serverUrl = self.serverComboBox.currentText
+    if not serverUrl:
+      serverUrl = "http://127.0.0.1:8000"
+    return serverUrl.rstrip("/")
+
   def updateServerUrlGUIFromSettings(self):
     # Save current server URL to the top of history
     settings = qt.QSettings()
@@ -790,16 +839,37 @@ class DCE_IDandPhaseSelectWidget(ScriptedLoadableModuleWidget):
     self.serverComboBox.setCurrentText(settings.value("MONAILabel/serverUrl"))
     self.serverComboBox.blockSignals(wasBlocked)
 
-  def onClickFetchInfo(self):
-    self.fetchInfo()
-
-  def fetchInfo(self, showInfo=False):
+  def onClickFetchSimpleInfo(self, showInfo=True):
     if not self.logic:
       return
 
     start = time.time()
     try:
-      self.updateServerSettings()
+      # 获取服务器地址输入框的内容，如果没有，默认为本地8000端口
+      # 作为logic一个属性
+      serverUrl = self.serverUrl()
+      self.logic.setServer(serverUrl)
+      self.logic.setClientId(slicer.util.settingsValue("MONAILabel/clientId", "user-xyz"))
+      # 保存此服务器地址到Panel面板
+      settings = qt.QSettings()
+      settings.setValue("MONAILabel/serverUrl", serverUrl)
+      serverUrlHistory = settings.value("MONAILabel/serverUrlHistory")
+      if serverUrlHistory:
+        serverUrlHistory = serverUrlHistory.split(";")
+      else:
+        serverUrlHistory = []
+      try:
+        serverUrlHistory.remove(serverUrl)
+      except ValueError:
+        pass
+      serverUrlHistory.insert(0, serverUrl)
+      serverUrlHistory = serverUrlHistory[:10]  # keep up to first 10 elements
+      settings.setValue("MONAILabel/serverUrlHistory", ";".join(serverUrlHistory))
+      # 再次加载Panel中服务器历史地址到GUI界面供下拉选择（更新文本框后的）
+      self.updateServerUrlGUIFromSettings()
+      # 调用infoAppName接口获取App Name
+      simpleInfo = self.logic.simpleInfo()
+      self.simpleInfo = simpleInfo
     except:
       slicer.util.errorDisplay(
         "Failed to fetch models from remote server. "
@@ -809,51 +879,28 @@ class DCE_IDandPhaseSelectWidget(ScriptedLoadableModuleWidget):
       )
       return
 
-  def updateServerSettings(self):
-    self.logic.setServer(self.serverUrl())
-    self.logic.setClientId(slicer.util.settingsValue("MONAILabel/clientId", "user-xyz"))
-    self.saveServerUrl()
+    self.updateGUIFromParameterNode()
+    msg = ""
+    msg += "-----------------------------------------------------\t\n"
+    msg += "成功连接服务器\t\n"
+    msg += "-----------------------------------------------------\t\n"
+    if showInfo:
+      qt.QMessageBox.information(slicer.util.mainWindow(), "Breast PCR", msg)
+    logging.info(msg)
+    logging.info(f"Time consumed by fetch info: {time.time() - start:3.1f}")
 
-  def serverUrl(self):
-    serverUrl = self.serverComboBox.currentText
-    if not serverUrl:
-      serverUrl = "http://127.0.0.1:8000"
-    return serverUrl.rstrip("/")
 
-  def saveServerUrl(self):
-    # Save selected server URL
-    settings = qt.QSettings()
-    serverUrl = self.serverComboBox.currentText
-    settings.setValue("MONAILabel/serverUrl", serverUrl)
 
-    # Save current server URL to the top of history
-    serverUrlHistory = settings.value("MONAILabel/serverUrlHistory")
-    if serverUrlHistory:
-      serverUrlHistory = serverUrlHistory.split(";")
-    else:
-      serverUrlHistory = []
-    try:
-      serverUrlHistory.remove(serverUrl)
-    except ValueError:
-      pass
+  def updateGUIFromParameterNode(self):
+    if self._parameterNode is None or self._updatingGUIFromParameterNode:
+      return
 
-    serverUrlHistory.insert(0, serverUrl)
-    serverUrlHistory = serverUrlHistory[:10]  # keep up to first 10 elements
-    settings.setValue("MONAILabel/serverUrlHistory", ";".join(serverUrlHistory))
+    # Make sure GUI changes do not call updateParameterNodeFromGUI (it could cause infinite loop)
+    self._updatingGUIFromParameterNode = True
+    self.appComboBox.clear()
+    self.appComboBox.addItem(self.simpleInfo.get("name", ""))
 
-    self.updateServerUrlGUIFromSettings()
-
-  def updateServerUrlGUIFromSettings(self):
-    # Save current server URL to the top of history
-    settings = qt.QSettings()
-    serverUrlHistory = settings.value("MONAILabel/serverUrlHistory")
-
-    wasBlocked = self.serverComboBox.blockSignals(True)
-    self.serverComboBox.clear()
-    if serverUrlHistory:
-      self.serverComboBox.addItems(serverUrlHistory.split(";"))
-    self.serverComboBox.setCurrentText(settings.value("MONAILabel/serverUrl"))
-    self.serverComboBox.blockSignals(wasBlocked)
+    self._updatingGUIFromParameterNode = False
 
 #
 # DCE_IDandPhaseSelectLogic
@@ -944,6 +991,9 @@ class DCE_IDandPhaseSelectLogic(ScriptedLoadableModuleLogic):
     
     print("All images loaded to Slicer")
     return True
+
+  def simpleInfo(self):
+    return PhaseSelectClient(self.server_url, self.tmpdir, self.client_id).simple_info()
 
   def upload_image(self, image_in, image_id=None, tag="", param={}):
     return PhaseSelectClient(self.server_url, self.tmpdir, self.client_id).upload_image(image_in, image_id, tag=tag, params=param)

@@ -1,0 +1,252 @@
+vtkMRMLScene Class：
+参考 https://apidocs.slicer.org/master/classvtkMRMLScene.html
+公共属性：
+enum  	SceneEventType {
+	slicer.mrmlScene.StartCloseEvent
+	slicer.mrmlScene.EndCloseEvent
+	slicer.mrmlScene.NodeAddedEvent
+}
+
+公共成员方法：
+slicer.mrmlScene.AddNewNodeByClass
+slicer.mrmlScene.CreateNodeByClass
+slicer.mrmlScene.AddNode会触发NodeAddedEvent事件
+slicer.mrmlScene.Clear (int removeSingletons=0)
+slicer.mrmlScene.RemoveNode
+slicer.mrmlScene.GetFirstNodeByClass
+slicer.mrmlScene.GetSingletonNode
+GetNodesByClass("vtkMRMLScalarVolumeNode").GetNumberOfItems()
+ for index in range(displayManagers.GetNumberOfItems()):
+slicer.mrmlScene.GetNodesByClass("vtkMRMLScalarVolumeNode").GetItemAsObject(0).GetName()
+
+
+self._parameterNode.GetParameter：
+SegmentationModel：存储当前选择的model名，一开始默认''
+DeepgrowModel
+ScribblesMethod
+CurrentLabel：
+CurrentScribLabel：
+CurrentStrategy（不需要了）
+GetNodeReference("InputVolume")
+
+嵌入分割编辑器：使用《分割编辑module》的参数节点作为嵌入的《分割编辑控件》，get_segment_editor_node这个函数确保如果用户切换到《分割编辑器》然后选择了segmentation节点、volume节点等
+
+
+函数initializeParameterNode：用于初始化ParameterNode
+self.logic.getParameterNode():getParameterNode, ScriptedLoadableModule.py:256
+"""
+    Return the first available parameter node for this module
+    If no parameter nodes are available for this module then a new one is created.
+    """
+"""
+    Create a new parameter node
+    The node is of vtkMRMLScriptedModuleNode class. Module name is added as an attribute to allow filtering
+    in node selector widgets (attribute name: ModuleName, attribute value: the module's name).
+    """
+
+
+
+函数updateGUIFromParameterNode：利用_parameterNode和self.info更新GUI
+根据Panel中.nii更新self.file_ext
+
+根据self._volumeNodes更新self.ui.inputSelector
+如果没有self._volumeNodes则setEnabled(False)
+
+获取vtkMRMLScalarVolumeNode的第一个节点
+
+根据self.current_sample和self.current_sample.get("session")的值
+将设置ui.uploadImageButton.setEnabled(False)
+
+更新ui.segmentationModelSelector：清空selector->将model_type为segmentation进行addItem->从_parameterNode获取当前选择的模型->combobox设置CurrentIndex
+更新ui.deepgrowModelSelector：model_type为deepgrow和deepedit
+更新ui.scribblesMethodSelector：model_type为scribbles
+如果self.models中有对应类型的model，将决定CollapsibleButton是否可见
+
+如果self.info.get("trainers", {})，将决定trainWidget是否可见
+
+如果self.info.get("labels", {})，将label加入到ui.labelComboBox，如果label不是背景，加入到scribLabelComboBox中
+
+从_parameterNode获取当前选择的CurrentLabel->labelComboBox设置CurrentIndex
+从_parameterNode获取当前选择的CurrentScribLabel->scribLabelComboBox设置CurrentIndex
+
+如果self.info.get("name", "")，将name加入到ui.appComboBox
+
+如果self.info.get("datastore", {})，根据current/total得到activeLearningProgressBar
+
+如果self.info.get("train_stats", {})，根据best_metric设置updateAccuracyBar
+
+如果self.info.get("strategies", {})
+
+如果self.info.get("trainers", {})
+
+根据develop_mode设置optionsCollapsibleButton是否可见
+
+根据self.ui.strategyBox.count设置nextSampleButton是否Enabled
+
+根据ui.segmentationModelSelector.currentText and self._volumeNode设置segmentationButton是否Enabled
+
+根据self._segmentNode设置saveLabelButton和importLabelButton是否可见
+
+根据self._segmentNode设置dgPositivePointListNode和dgNegativePointListNode和dgPositiveControlPointPlacementWidget
+
+根据ui.deepgrowModelSelector.currentText and self._segmentNode设置dgUpdateCheckBox和dgUpdateButton是否Enabled
+
+
+
+函数updateParameterNodeFromGUI：
+根据selector的currentIndex确定_parameterNode中
+SegmentationModel、DeepgrowModel、ScribblesMethod、CurrentLabel、CurrentScribLabel、CurrentStrategy、CurrentTrainer的值
+
+self.current_sample:
+{'id': 'Visit unknown pre-contrast', 'session': True, 'VolumeNodeName': 'Visit unknown pre-contrast'}
+
+self.info:
+name:{}
+labels:{}
+infer-models:{}->self.models
+train-trainers:{}
+activelearning-strategies:{}
+train_stats:{}
+datastore:{}
+
+state:{'SegmentationModel': '', 'DeepgrowModel': '', 'ScribblesMethod': '', 'CurrentStrategy': '', 'CurrentTrainer': ''}
+config:{}（无）
+
+{
+	'name': 'MONAILabel - Radiology (0.6.0rc1+26.g7ef6384.dirty)',
+	'description': 'DeepLearning models for radiology',
+	'version': '0.6.0rc1+26.g7ef6384.dirty',
+	'labels': ['mass'],
+	'models': {
+		'segmentation_breast': {
+			'type': 'segmentation',
+			'labels': {
+				'mass': 1
+			},
+			'dimension': 3,
+			'description': 'A pre-trained model for volumetric (3D) breast segmentation over 3D Images',
+			'config': {
+				'device': ['cuda']
+			}
+		},
+		'segmentation_breast_prod': {
+			'type': 'segmentation',
+			'labels': {
+				'mass': 1
+			},
+			'dimension': 3,
+			'description': 'A pre-trained model for volumetric (3D) breast segmentation over 3D Images',
+			'config': {
+				'device': ['cuda']
+			}
+		},
+		'Histogram+GraphCut': {
+			'type': 'scribbles',
+			'labels': {
+				'mass': 1
+			},
+			'dimension': 3,
+			'description': 'A post processing step with histogram-based GraphCut for Generic segmentation',
+			'config': {
+				'num_bins': 64,
+				'lamda': 1.0,
+				'sigma': 0.1,
+				'device': ['cuda']
+			}
+		},
+		'GMM+GraphCut': {
+			'type': 'scribbles',
+			'labels': {
+				'mass': 1
+			},
+			'dimension': 3,
+			'description': 'A post processing step with GMM-based GraphCut for Generic segmentation',
+			'config': {
+				'num_mixtures': 20,
+				'lamda': 5.0,
+				'sigma': 0.5,
+				'device': ['cuda']
+			}
+		}
+	},
+	'trainers': {},
+	'strategies': {（不需要了）
+		'search': {
+			'description': 'Get Search Sample'
+		},
+		'random': {
+			'description': 'Random Strategy'
+		},
+		'first': {
+			'description': 'Get First Sample'
+		},
+		'last': {
+			'description': 'Get Last Sample'
+		}
+	},
+	'scoring': {},
+	'train_stats': {},
+	'datastore': {（不需要了）
+		'total': 1,
+		'completed': 1,
+		'label_tags': {
+			'final': 1
+		}
+	}
+}
+
+
+
+
+
+
+当初始启动Slicer时，执行initializeAfterStartup函数
+
+当初始进入一个模块时候，先执行setup函数
+（添加嵌入分割编辑器，触发Nodeadd函数+updateGUIFromParameterNode函数，但_parameterNode并没有
+->ui.optionsSection增加选项，触发onSelectOptionsSection函数+updateParameterNodeFromGUI函数，但_parameterNode并没有，更新updateConfigTable，但self.info没有
+->执行updateServerUrlGUIFromSettings函数，加载Panel中服务器历史地址到GUI界面供下拉选择
+->执行onClickFetchInfo函数，
+	（获取服务器地址输入框的内容-作为logic一个属性-保存此服务器地址到Panel面板-再次加载Panel中服务器历史地址到GUI界面供下拉选择）
+	（获取Info接口后，填充self.models，触发updateGUIFromParameterNode函数，但_parameterNode并没有）
+	（updateConfigTable函数，infer类参数）
+->执行initializeParameterNode函数
+	（首次新建_parameterNode，触发Nodeadd函数+updateGUIFromParameterNode函数，但_parameterNode并没有）
+	（赋值_parameterNode，然后updateGUIFromParameterNode（加粗），执行过程中会触发onSelect一系列函数，但_updatingGUIFromParameterNode阻止了）
+再执行enter函数
+
+其他模块添加Node后也会触发事件（前提是先前打开过交互分割模块）
+当切换走这个模块时候，执行exit函数（去除有关_parameterNode的所有观察事件，那_parameterNode的值是否还在？还在）
+当再次切换回来这个模块时候，执行enter函数
+
+点击reload时，先执行cleanup函数，再执行setup函数，不执行enter函数
+点击restart时，先执行cleanup函数，然后初始启动Slicer
+点击关闭时，先exiting2->cleanuping2->cleanuping1->（存疑？只会执行当前模块的exit函数和所有模块的cleanup函数）
+
+如果没有volumnNode，也不会创建segmentNode
+
+
+当初始进入一个模块时候，先执行setup函数
+->执行updateServerUrlGUIFromSettings函数，加载Panel中服务器历史地址到GUI界面供下拉选择
+->执行onClickFetchSimpleInfo函数，
+	（获取服务器地址输入框的内容-作为logic一个属性-保存此服务器地址到Panel面板-再次加载Panel中服务器历史地址到GUI界面供下拉选择）
+	（获取SimpleInfo接口后，填充self.name，触发updateGUIFromParameterNode函数，但_parameterNode并没有）
+->执行initializeParameterNode函数
+	（首次新建_parameterNode，触发Nodeadd函数，什么都不会发生）
+	（赋值_parameterNode，然后updateGUIFromParameterNode（加粗），更新appName
+再执行enter函数
+
+init_sample函数：
+当前volumnNode为self.current_sample
+加入到samples
+加入到self._volumeNodes
+创建一个空的segmentNode节点-createSegmentNode
+分割编辑器的SegmentationNode和MasterVolumeNode
+创建空的-createScribblesROINode
+updateSegmentationMask（如果'mass'标签为空， segmentation.AddEmptySegment；）
+
+
+
+
+
+

@@ -198,18 +198,16 @@ class DCE_TumorMapProcess(ScriptedLoadableModule):
 
   def __init__(self, parent):
     ScriptedLoadableModule.__init__(self, parent)
-    self.parent.title = "Module 2: Compute FTV in ROI"  # TODO: make this more human readable by adding spaces
-    self.parent.categories = ["FTV Segmentation"]  # TODO: set categories (folders where the module shows up in the module selector)
-    self.parent.dependencies = []  # TODO: add here list of module names that this module requires
-    self.parent.contributors = ["Rohan Nadkarni (UCSF Breast Imaging Research Group)"]  # TODO: replace with "Firstname Lastname (Organization)"
+    self.parent.title = "模块3：疗效预测模块"
+    self.parent.categories = ["Breast PCR"]
+    self.parent.dependencies = []
+    self.parent.contributors = ["YaChen Zhao"]
     self.parent.helpText = """
-This is an example of scripted loadable module bundled in an extension.
-"""  # TODO: update with short description of the module
-    self.parent.helpText += self.getDefaultModuleDocumentationLink()  # TODO: verify that the default URL is correct or change it to the actual documentation
+Breast PCR Predictiton solution.
+"""
     self.parent.acknowledgementText = """
-This file was originally developed by Jean-Christophe Fillion-Robin, Kitware Inc., Andras Lasso, PerkLab,
-and Steve Pieper, Isomics, Inc. and was partially funded by NIH grant 3P41RR013218-12S1.
-"""  # TODO: replace with organization, grant and thanks.
+Developed by Institute of Software, Chinese Academy of Sciences. All rights reserved.
+"""
 
 #
 # DCE_TumorMapProcessWidget

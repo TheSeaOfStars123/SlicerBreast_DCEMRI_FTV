@@ -28,6 +28,18 @@ class PhaseSelectClient:
             params = {"client_id": self._client_id}
         return params
 
+    def simple_info(self):
+        selector = "/info/"
+        status, response, _, _ = MONAILabelUtils.http_method("GET", self._server_url, selector)
+        if status != 200:
+            raise MONAILabelException(
+                MONAILabelError.SERVER_ERROR, f"Status: {status}; Response: {response}", status, response
+            )
+
+        response = response.decode("utf-8") if isinstance(response, bytes) else response
+        logging.debug(f"Response: {response}")
+        return json.loads(response)
+
     def upload_image(self, image_in, image_id=None, tag="", params=None):
         selector = f"/datastore/?image={MONAILabelUtils.urllib_quote_plus(image_id)}"
         if tag:
