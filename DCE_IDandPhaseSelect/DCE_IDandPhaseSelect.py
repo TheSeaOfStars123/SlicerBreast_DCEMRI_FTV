@@ -123,7 +123,8 @@ def loadPreEarlyLate(exampath,visitnum,orig,dce_folders_manual,dce_ind_manual,ea
   else:
     nodevisstr = visitnum
     prenodestr = nodevisstr + ' pre-contrast'
-    earlynodestr = nodevisstr + ' early post-contrast'
+    # earlynodestr = nodevisstr + ' early post-contrast'
+    earlynodestr = nodevisstr
     latenodestr = nodevisstr + ' late post-contrast'
 
 
@@ -151,7 +152,9 @@ def loadPreEarlyLate(exampath,visitnum,orig,dce_folders_manual,dce_ind_manual,ea
     with open(wkspc_savepath,'wb') as f:
       pickle.dump([tempres, all_folders_info, dce_folders, dce_ind, fsort, studydate, nslice, earlyPostContrastNum, latePostContrastNum, earlydiffmm, earlydiffss, latediffmm, latediffss],f)
 
-  lbltxt = "DCE images are in folders " + str(dce_folders) + ". Early and late post-contrast phases are " + str(earlyPostContrastNum) + " and " + str(latePostContrastNum)
+  # lbltxt = "DCE images are in folders " + str(dce_folders) + ". Early and late post-contrast phases are " + str(earlyPostContrastNum) + " and " + str(latePostContrastNum)
+  lbltxt = "DCE影像位于文件夹" + str(dce_folders) + ". Early and late post-contrast phases are " + str(earlyPostContrastNum) + " and " + str(latePostContrastNum)
+
   progressBar.value = 25
   progressBar.labelText = lbltxt
   slicer.app.processEvents()
@@ -349,7 +352,7 @@ class DCE_IDandPhaseSelectWidget(ScriptedLoadableModuleWidget, VTKObservationMix
     # 服务器设置
     self.serverSettingsGridLayout = qt.QGridLayout()
     # 0,0
-    self.label = qt.QLabel("Python Server:")
+    self.label = qt.QLabel("服务端地址:")
     self.serverSettingsGridLayout.addWidget(self.label, 0, 0, 1, 1)
     # 0,1
     self.serverComboBox = qt.QComboBox()
@@ -363,7 +366,7 @@ class DCE_IDandPhaseSelectWidget(ScriptedLoadableModuleWidget, VTKObservationMix
     self.fetchServerInfoButton.setObjectName("fetchServerInfoButton")
     self.serverSettingsGridLayout.addWidget(self.fetchServerInfoButton, 0, 7, 1, 1)
     # 1,0
-    self.label_3 = qt.QLabel("App Name:")
+    self.label_3 = qt.QLabel("App名称:")
     self.label_3.setObjectName("label_3")
     self.serverSettingsGridLayout.addWidget(self.label_3, 1, 0, 1, 1)
     # 1,1
@@ -382,9 +385,9 @@ class DCE_IDandPhaseSelectWidget(ScriptedLoadableModuleWidget, VTKObservationMix
 
     # 导入/载入按钮
     hlayout = qt.QHBoxLayout()
-    self.loadNewButton = qt.QPushButton("导入新的")
+    self.loadNewButton = qt.QPushButton("导入新影像")
     self.loadNewButton.enabled = True
-    self.loadOldButton = qt.QPushButton("载入旧的")
+    self.loadOldButton = qt.QPushButton("载入旧影像")
     self.loadOldButton.enabled = True
     hlayout.addWidget(self.loadNewButton)
     hlayout.addWidget(self.loadOldButton)
@@ -394,7 +397,7 @@ class DCE_IDandPhaseSelectWidget(ScriptedLoadableModuleWidget, VTKObservationMix
 
     #7/6/2021: Add boxes to allow user to set early and late
     #post-contrast times
-    self.earlytimelbl = qt.QLabel("Early Post-Contrast Time (seconds after contrast injection):")
+    self.earlytimelbl = qt.QLabel("造影后早期影像 (使用对比剂后秒数):")
     self.earlytime = qt.QSpinBox()
     self.earlytime.setMinimum(60)
     self.earlytime.setMaximum(180)
@@ -403,7 +406,7 @@ class DCE_IDandPhaseSelectWidget(ScriptedLoadableModuleWidget, VTKObservationMix
     #set min and max possible values of 30 and 180 (seconds) for this spin box
     self.parametersFormLayout.addRow(self.earlytimelbl, self.earlytime)
 
-    self.latetimelbl = qt.QLabel("Late Post-Contrast Time (seconds after contrast injection):")
+    self.latetimelbl = qt.QLabel("造影后晚期影像 (使用对比剂后秒数):")
     self.latetime = qt.QSpinBox()
     self.latetime.setMinimum(210)
     self.latetime.setMaximum(510)
@@ -416,14 +419,17 @@ class DCE_IDandPhaseSelectWidget(ScriptedLoadableModuleWidget, VTKObservationMix
     #but don't actually show it unless user has selected manual option.
 
     hlayout2 = qt.QHBoxLayout()
-    self.manualSubmitButton = qt.QPushButton("Done")
+    self.manualSubmitButton = qt.QPushButton("确定导入")
     self.manualSubmitButton.toolTip = "Submit manual DCE folder selections."
     self.manualSubmitButton.enabled = True
     self.manualSubmitButton.connect('clicked(bool)', self.onApplyButton)
 
-    self.uploadImageButton = qt.QPushButton("上传")
+    self.uploadImageButton = qt.QPushButton("上传影像")
     self.uploadImageButton.enabled = True
     self.uploadImageButton.connect('clicked(bool)', self.onUploadImage)
+
+
+
 
     # Add vertical spacer
     self.layout.addStretch(1)
@@ -495,7 +501,8 @@ class DCE_IDandPhaseSelectWidget(ScriptedLoadableModuleWidget, VTKObservationMix
 
       #Then, add QLabel for this menu
       self.listLabel = qt.QLabel()
-      self.listLabel.setText("Choose DCE folders from list below, then click 'Done' button.")
+      # self.listLabel.setText("Choose DCE folders from list below, then click 'Done' button.")
+      self.listLabel.setText("请在下方勾选出DCE-MRI和t2模态对应的文件夹，然后点击\"确定导入\"按钮")
       self.listLabel.setStyleSheet("margin-left:50%; margin-right:50%;") #Center align the label for the DCE folder checkboxes
       self.parametersFormLayout.addRow(self.listLabel)
 
@@ -551,7 +558,7 @@ class DCE_IDandPhaseSelectWidget(ScriptedLoadableModuleWidget, VTKObservationMix
           self.dce_ind_manual.append(mmm)
       print("Manually selected DCE folders are")
       print(self.dce_folders_manual)
-      logic.run(self.exampath,self.dce_folders_manual,self.dce_ind_manual,self.visitstr,self.earlytime.value,self.latetime.value)
+      logic.run(self.exampath,self.dce_folders_manual,self.dce_ind_manual,self.idstr,self.earlytime.value,self.latetime.value)
 
   def onUploadImage(self):
     # image_id = ''.join(self.idstr.split())
@@ -582,7 +589,7 @@ class DCE_IDandPhaseSelectWidget(ScriptedLoadableModuleWidget, VTKObservationMix
 
   def reportProgress(self, progressPercentage):
     if not self.progressBar:
-      self.progressBar = slicer.util.createProgressDialog(windowTitle="Wait...", maximum=100)
+      self.progressBar = slicer.util.createProgressDialog(windowTitle="等待中...", maximum=100)
     self.progressBar.show()
     self.progressBar.activateWindow()
     self.progressBar.setValue(progressPercentage)
@@ -750,8 +757,9 @@ class DCE_IDandPhaseSelectWidget(ScriptedLoadableModuleWidget, VTKObservationMix
       if (visnum == 'v50'):
         visforlbl = 'MR5'
 
-      self.examlbl = "Choose Preferred Method of DCE Series ID for " + self.sitestr[
-                                                                       5:] + " " + self.idstr + " " + visforlbl
+      # self.examlbl = "Choose Preferred Method of DCE Series ID for " + self.sitestr[
+      #                                                                  5:] + " " + self.idstr + " " + visforlbl
+      self.examlbl = "您现在正在导入的影像序列： " + self.sitestr[5:] + " " + self.idstr + " " + visforlbl
     else:
       visnum = self.visitstr
       visforlbl = 'Visit unknown'
@@ -774,7 +782,8 @@ class DCE_IDandPhaseSelectWidget(ScriptedLoadableModuleWidget, VTKObservationMix
       if (visnum == 'v50'):
         visforlbl = 'MR5'
 
-      self.examlbl = "Choose Preferred Method of DCE Series ID for " + self.sitestr + " " + self.idstr + " " + visforlbl
+      # self.examlbl = "Choose Preferred Method of DCE Series ID for " + self.sitestr + " " + self.idstr + " " + visforlbl
+      self.examlbl = "您现在正在导入的影像序列： " + self.sitestr + " " + self.idstr + " " + visforlbl + "\n"
 
       # 2/11/2021: Adding interface to allow user to choose between manual and automatic folder ID
     self.DCE_ID_choose = qt.QLabel()
@@ -802,7 +811,7 @@ class DCE_IDandPhaseSelectWidget(ScriptedLoadableModuleWidget, VTKObservationMix
     self.searchContentEdit = qt.QLineEdit()
     self.parametersFormLayout.addRow(self.searchContentLabel, self.searchContentEdit)
 
-    self.startSearchButton = qt.QPushButton("Done")
+    self.startSearchButton = qt.QPushButton("确定载入")
     self.startSearchButton.setStyleSheet(
       "margin-left:50%; margin-right:50%;")
     self.startSearchButton.toolTip = "开始搜索病例"

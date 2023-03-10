@@ -179,6 +179,9 @@ def makeFTVMaps2(exampath, bbb_npimg, dce_folders, roicenter, roiradius, earlyPo
     # Loading early post-contrast image into numpy array
     print("-----EARLY POST-CONTRAST IMAGE-----")
     m, b = read_DCE_images_to_numpy.earlyOrLateImgSelect(earlyPostContrastNum, dce_folders, exampath)
+    # Loading late post-contrast image into numpy array
+    print("-----LATE POST-CONTRAST IMAGE-----")
+    m, c = read_DCE_images_to_numpy.earlyOrLateImgSelect(latePostContrastNum, dce_folders, exampath)
 
     # function used to add an ROI or omit region to a voi_mask numpy array
     def addToVOIMask(voi_mask, center, radius, maskval):
@@ -196,9 +199,7 @@ def makeFTVMaps2(exampath, bbb_npimg, dce_folders, roicenter, roiradius, earlyPo
     voi_mask = np.zeros(a.shape)
     # add roi to voi mask
     xs, xf, ys, yf, zs, zf, voi_mask = addToVOIMask(voi_mask, roicenter, roiradius, 1)
-    # Loading late post-contrast image into numpy array
-    print("-----LATE POST-CONTRAST IMAGE-----")
-    m, c = read_DCE_images_to_numpy.earlyOrLateImgSelect(latePostContrastNum, dce_folders, exampath)
+
     ser = (b - a) / (c - a)
     ser_mask = (ser >= 0)  # 4/28/21: Explicitly use SER>=0 for FTV definition
     tumor_mask = bbb_npimg * ser_mask  # tumor segment #Edit 4/28/21: multiply by ser_mask too

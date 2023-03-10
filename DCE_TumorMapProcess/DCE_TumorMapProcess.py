@@ -37,6 +37,8 @@ from slicer.ScriptedLoadableModule import *
 from slicer.util import VTKObservationMixin
 import numpy as np
 
+from DCE_IDandPhaseSelect.Breast_DCEMRI_FTV_plugins1 import PhaseSelectClient
+
 try:
   import pydicom
 except:
@@ -217,12 +219,14 @@ class DCE_TumorMapProcessWidget(ScriptedLoadableModuleWidget):
   """Uses ScriptedLoadableModuleWidget base class, available at:
   https://github.com/Slicer/Slicer/blob/master/Base/Python/slicer/ScriptedLoadableModule.py
   """
-
+  def __init__(self):
+      self.logic = None
   def setup(self):
 
 ##    showdialog()
 
     ScriptedLoadableModuleWidget.setup(self)
+    self.logic = DCE_TumorMapProcessLogic()
 
     #Add Axes Orientation Marker to the red and yellow slices automatically
     redNode = slicer.util.getNode('vtkMRMLSliceNodeRed')
@@ -517,7 +521,7 @@ class DCE_TumorMapProcessWidget(ScriptedLoadableModuleWidget):
     #Format of runstarttime is like 20200101_12:30
     self.runstarttime = str(start.year) + str(start.month) + str(start.day) + "_" + str(start.hour) + "_" + str(start.minute)  #Processing start time, that is included in output files or folders
 
-        #
+    #
     # input volume selector
     #
     self.inputSelector = slicer.qMRMLNodeComboBox()
@@ -530,10 +534,11 @@ class DCE_TumorMapProcessWidget(ScriptedLoadableModuleWidget):
     self.inputSelector.showChildNodeTypes = False
     self.inputSelector.setMRMLScene( slicer.mrmlScene )
     self.inputSelector.setToolTip( "Select image to view." )
-    parametersFormLayout.addRow("Displayed Image: ", self.inputSelector)
+    parametersFormLayout.addRow("当前影像: ", self.inputSelector)
 
-    #Create ROI and add it to scene
-    #Edit 6/8/2020: Make ROI always at center of image, regardless of image size
+    #
+    # segment volume
+    #
     inputVolume = self.inputSelector.currentNode()
     img = inputVolume.GetImageData()
     rows,cols,slices = img.GetDimensions()
@@ -568,8 +573,6 @@ class DCE_TumorMapProcessWidget(ScriptedLoadableModuleWidget):
                                  (bound_arr[4] + bound_arr[5]) / 2])  # [174 280  67.5]
         roiradius = np.array([np.abs(roicenter[0] - bound_arr[0]), np.abs(roicenter[1] - bound_arr[2]),
                                  np.abs(roicenter[2] - bound_arr[4])]) # [16 14  5.5]
-
-
     inputVolume.GetDisplayNode().SetAutoWindowLevel(False) #Do this to prevent auto window leveling
     self.windowmin = inputVolume.GetDisplayNode().GetWindowLevelMin()
     self.windowmax = inputVolume.GetDisplayNode().GetWindowLevelMax()
@@ -690,26 +693,184 @@ class DCE_TumorMapProcessWidget(ScriptedLoadableModuleWidget):
     #Checkbox for subtraction
     self.subtractCheckBox = qt.QCheckBox("Show Subtraction")
     self.subtractCheckBox.setChecked(False)
-    parametersFormLayout.addRow(self.subtractCheckBox)
+    # parametersFormLayout.addRow(self.subtractCheckBox)
+    # self.subtractCheckBox.hide()
 
     #Checkboxes for axial and sagittal MIPs
 
     #Axial MIP checkbox
     self.axchkbox = qt.QCheckBox("Show Axial MIP")
     self.axchkbox.setChecked(False)
-    parametersFormLayout.addRow(self.axchkbox)
+    # parametersFormLayout.addRow(self.axchkbox)
+    # self.axchkbox.hide()
 
     #Sagittal MIP checkbox
     self.sagchkbox = qt.QCheckBox("Show Sagittal MIPs")
     self.sagchkbox.setChecked(False)
-    parametersFormLayout.addRow(self.sagchkbox)
+    # parametersFormLayout.addRow(self.sagchkbox)
+    # self.sagchkbox.hide()
 
-    #Edit 7/24/2020: Turn lesion segmenting into a checkbox option instead of a button
-    #with no option to remove SER lesion segmentation after it has been overlayed on
-    #image
-    self.segmentLesionCheckBox = qt.QCheckBox("Show Lesion Segmentation")
+
+    # 按键区
+    self.horizontalLayout = qt.QHBoxLayout()
+    self.segmentLesionCheckBox = qt.QCheckBox("展示SER图识别结果")
     self.segmentLesionCheckBox.setChecked(False)
-    parametersFormLayout.addRow(self.segmentLesionCheckBox)
+    self.horizontalLayout.addWidget(self.segmentLesionCheckBox)
+
+    self.predictButton = qt.QPushButton("疗效预测")
+    self.predictButton.setIcon(self.icon("predict.png"))
+    self.predictButton.toolTip = "Predict PCR."
+    self.predictButton.connect("clicked(bool)", self.onPredictResult)
+    self.horizontalLayout.addWidget(self.predictButton)
+
+    self.applyButton = qt.QPushButton("生成报告单")
+    self.applyButton.setIcon(self.icon("report.png"))
+    self.applyButton.toolTip = "Generate Report."
+    self.applyButton.enabled = False
+    self.horizontalLayout.addWidget(self.applyButton)
+    parametersFormLayout.addRow(self.horizontalLayout)
+
+    # 按键下方区域
+    self.tabWidget = qt.QTabWidget()
+    # result_tab选项卡自定义的内容
+    self.result_tab = qt.QWidget()
+    self.gridLayoutWidget = qt.QWidget(self.result_tab)
+    # self.gridLayoutWidget.setGeometry(qt.QRect(0, 0, 250, 150))
+    self.gridLayout = qt.QGridLayout(self.gridLayoutWidget)
+    self.gridLayout.setContentsMargins(0, 0, 0, 0)
+
+    #Labels for SER Color Percentage Distribution RuntimeError
+    self.TumorPctDistLbl = qt.QLabel(self.gridLayoutWidget)
+    self.TumorPctDistLbl.setText(" 病变区域中SER图颜色分布比例")
+    self.TumorPctDistLbl.setMargin(14)
+    self.gridLayout.addWidget(self.TumorPctDistLbl, 0, 0, 1, 3)
+
+    # 左侧图片区
+    pathtoscript, scriptname = os.path.split(os.path.realpath(__file__))
+    colorbar_path = os.path.join(pathtoscript, 'ser_colorbar.png')
+    pixmap = qt.QPixmap(colorbar_path)
+    smaller_pixmap = pixmap.scaled(210, 210, qt.Qt.KeepAspectRatio, qt.Qt.FastTransformation)
+    self.label = qt.QLabel(self.gridLayoutWidget)
+    self.label.setPixmap(smaller_pixmap)
+    self.gridLayout.addWidget(self.label, 1, 0, 6, 2)
+
+    # 右侧第一行
+    self.YellowPctLbl = qt.QLabel(self.gridLayoutWidget)
+    self.YellowPctLbl.setText( "     黄色区域（Yellow）: " )
+    self.YellowValue = qt.QLabel(self.gridLayoutWidget)
+    self.gridLayout.addWidget(self.YellowPctLbl, 1, 2, 1, 1)
+    self.gridLayout.addWidget(self.YellowValue, 1, 3, 1, 1)
+    # parametersFormLayout.addRow(self.YellowPctLbl,self.YellowValue)
+
+    self.RedPctLbl = qt.QLabel(self.gridLayoutWidget)
+    self.RedPctLbl.setText( "     红色区域（Red）: " )
+    self.RedValue = qt.QLabel(self.gridLayoutWidget)
+    self.gridLayout.addWidget(self.RedPctLbl, 2, 2, 1, 1)
+    self.gridLayout.addWidget(self.RedValue, 2, 3, 1, 1)
+    # parametersFormLayout.addRow(self.RedPctLbl,self.RedValue)
+
+    self.GreenPctLbl = qt.QLabel(self.gridLayoutWidget)
+    self.GreenPctLbl.setText( "     绿色区域（Green）: " )
+    self.GreenValue = qt.QLabel(self.gridLayoutWidget)
+    self.gridLayout.addWidget(self.GreenPctLbl, 3, 2, 1, 1)
+    self.gridLayout.addWidget(self.GreenValue, 3, 3, 1, 1)
+    # parametersFormLayout.addRow(self.GreenPctLbl,self.GreenValue)
+
+    self.PurplePctLbl = qt.QLabel(self.gridLayoutWidget)
+    self.PurplePctLbl.setText( "     紫色区域（Purple）: " )
+    self.PurpleValue = qt.QLabel(self.gridLayoutWidget)
+    self.gridLayout.addWidget(self.PurplePctLbl, 4, 2, 1, 1)
+    self.gridLayout.addWidget(self.PurpleValue, 4, 3, 1, 1)
+    # parametersFormLayout.addRow(self.PurplePctLbl,self.PurpleValue)
+
+    self.BluePctLbl = qt.QLabel(self.gridLayoutWidget)
+    self.BluePctLbl.setText( "     蓝色区域（Blue）: " )
+    self.BlueValue = qt.QLabel(self.gridLayoutWidget)
+    self.gridLayout.addWidget(self.BluePctLbl, 5, 2, 1, 1)
+    self.gridLayout.addWidget(self.BlueValue, 5, 3, 1, 1)
+    # parametersFormLayout.addRow(self.BluePctLbl,self.BlueValue)
+
+    self.TotVolLbl = qt.QLabel(self.gridLayoutWidget)
+    self.TotVolLbl.setText("     总共（Total）: ")
+    self.TotVolValue = qt.QLabel(self.gridLayoutWidget)
+    self.gridLayout.addWidget(self.TotVolLbl, 6, 2, 1, 1)
+    self.gridLayout.addWidget(self.TotVolValue, 6, 3, 1, 1)
+    # parametersFormLayout.addRow(self.TotVolLbl,self.TotVolValue)
+
+    self.tabWidget.addTab(self.result_tab, "SER比例")
+
+
+    # predict_tab选项卡自定义的内容
+    self.predict_tab = qt.QWidget()
+    self.gridLayoutWidget2 = qt.QWidget(self.predict_tab)
+    self.gridLayoutWidget2.setGeometry(qt.QRect(0, 0, 450, 220))
+    self.gridLayout2 = qt.QGridLayout(self.gridLayoutWidget2)
+    self.gridLayout2.setContentsMargins(0, 0, 0, 0)
+    self.gridLayout2.setVerticalSpacing(15)
+
+    # 第一行特征
+    self.Feature1Lbl = qt.QLabel(self.gridLayoutWidget2)
+    self.Feature1Lbl.setText("  平整度：")
+    self.Feature1Value = qt.QLineEdit(self.gridLayoutWidget2)
+    self.Feature1Value.toolTip = "0代表平面对象，1代表非平面对象。"
+    self.gridLayout2.addWidget(self.Feature1Lbl, 0, 0, 1, 2)
+    self.gridLayout2.addWidget(self.Feature1Value, 0, 2, 1, 4)
+
+    self.Feature2Lbl = qt.QLabel(self.gridLayoutWidget2)
+    self.Feature2Lbl.setText("  最小轴长：")
+    self.Feature2Value = qt.QLineEdit(self.gridLayoutWidget2)
+    self.Feature2Value.toolTip = "病灶区域内封闭椭圆体的最小轴长度。"
+    self.gridLayout2.addWidget(self.Feature2Lbl, 0, 7, 1, 2)
+    self.gridLayout2.addWidget(self.Feature2Value, 0, 9, 1, 4)
+
+
+    self.Feature3Lbl = qt.QLabel(self.gridLayoutWidget2)
+    self.Feature3Lbl.setText("  表面积体积比：")
+    self.Feature3Value = qt.QLineEdit(self.gridLayoutWidget2)
+    self.Feature3Value.toolTip = "较低的值表示形状更紧凑（球形）。"
+    self.gridLayout2.addWidget(self.Feature3Lbl, 2, 0, 1, 2)
+    self.gridLayout2.addWidget(self.Feature3Value, 2, 2, 1, 4)
+
+    self.Feature4Lbl = qt.QLabel(self.gridLayoutWidget2)
+    self.Feature4Lbl.setText("  最大灰度值：")
+    self.Feature4Value = qt.QLineEdit(self.gridLayoutWidget2)
+    self.Feature4Value.toolTip = "病灶区域内最大灰度强度值。"
+    self.gridLayout2.addWidget(self.Feature4Lbl, 2, 7, 1, 2)
+    self.gridLayout2.addWidget(self.Feature4Value, 2, 9, 1, 4)
+
+    self.Feature5Lbl = qt.QLabel(self.gridLayoutWidget2)
+    self.Feature5Lbl.setText("  灰度值范围：")
+    self.Feature5Value = qt.QLineEdit(self.gridLayoutWidget2)
+    self.Feature5Value.toolTip = "病灶区域内灰度值范围。"
+    self.gridLayout2.addWidget(self.Feature5Lbl, 4, 0, 1, 2)
+    self.gridLayout2.addWidget(self.Feature5Value, 4, 2, 1, 4)
+
+    self.Feature6Lbl = qt.QLabel(self.gridLayoutWidget2)
+    self.Feature6Lbl.setText("  灰度不均匀性：")
+    self.Feature6Value = qt.QLineEdit(self.gridLayoutWidget2)
+    self.Feature6Value.toolTip = "测量图像中灰度值的相似性，低值说明灰度具有较大均匀性。"
+    self.gridLayout2.addWidget(self.Feature6Lbl, 4, 7, 1, 2)
+    self.gridLayout2.addWidget(self.Feature6Value, 4, 9, 1, 4)
+
+    self.Feature7Lbl = qt.QLabel(self.gridLayoutWidget2)
+    self.Feature7Lbl.setText("  纹理粗糙度：")
+    self.Feature7Value = qt.QLineEdit(self.gridLayoutWidget2)
+    self.Feature7Value.toolTip = "值越高表示更精细的纹理。"
+    self.gridLayout2.addWidget(self.Feature7Lbl, 6, 0, 1, 2)
+    self.gridLayout2.addWidget(self.Feature7Value, 6, 2, 1, 4)
+
+    self.Feature8Lbl = qt.QLabel(self.gridLayoutWidget2)
+    self.Feature8Lbl.setText("  疗效预测结果：")
+    self.Feature8Value = qt.QLineEdit(self.gridLayoutWidget2)
+    self.Feature8Value.toolTip = "结果仅供参考。"
+    self.gridLayout2.addWidget(self.Feature8Lbl, 6, 7, 1, 2)
+    self.gridLayout2.addWidget(self.Feature8Value, 6, 9, 1, 4)
+
+    self.tabWidget.addTab(self.predict_tab, "预测结果")
+
+    parametersFormLayout.addRow(self.tabWidget)
+
+
 
     #Initialize empty object elements that will be used to store
     #ROI and omit region(s) centers and radii. Max of 5 omit regions.
@@ -721,24 +882,24 @@ class DCE_TumorMapProcessWidget(ScriptedLoadableModuleWidget):
 
     # 7/21/2021: Go to ROI Center button
     #
-    self.goToROICenterButton = qt.QPushButton("Go to ROI Center")
-    self.goToROICenterButton.toolTip = "Go to ROI Center"
-    self.goToROICenterButton.enabled = True
-    parametersFormLayout.addRow(self.goToROICenterButton)
+    # self.goToROICenterButton = qt.QPushButton("Go to ROI Center")
+    # self.goToROICenterButton.toolTip = "Go to ROI Center"
+    # self.goToROICenterButton.enabled = True
+    # parametersFormLayout.addRow(self.goToROICenterButton)
 
     # Import ROI Button
     #
-    self.importROIButton = qt.QPushButton("Import ROI and Omits from File")
-    self.importROIButton.toolTip = "Import ROI From File"
-    self.importROIButton.enabled = True
-    parametersFormLayout.addRow(self.importROIButton)
+    # self.importROIButton = qt.QPushButton("Import ROI and Omits from File")
+    # self.importROIButton.toolTip = "Import ROI From File"
+    # self.importROIButton.enabled = True
+    # parametersFormLayout.addRow(self.importROIButton)
 
     # Add Omit Region Button
     #
-    self.addOmitButton = qt.QPushButton("Add Omit Region")
-    self.addOmitButton.toolTip = "Add Omit Region"
-    self.addOmitButton.enabled = True
-    parametersFormLayout.addRow(self.addOmitButton)
+    # self.addOmitButton = qt.QPushButton("Add Omit Region")
+    # self.addOmitButton.toolTip = "Add Omit Region"
+    # self.addOmitButton.enabled = True
+    # parametersFormLayout.addRow(self.addOmitButton)
 
     #Add Omit region count
     self.omitCount = 0
@@ -752,10 +913,10 @@ class DCE_TumorMapProcessWidget(ScriptedLoadableModuleWidget):
 
     # Save Region to File Button
     #
-    self.saveRegionButton = qt.QPushButton("Save ROI and Omits to File")
-    self.saveRegionButton.toolTip = "Save ROI and Omits to File"
-    self.saveRegionButton.enabled = True
-    parametersFormLayout.addRow(self.saveRegionButton)
+    # self.saveRegionButton = qt.QPushButton("Save ROI and Omits to File")
+    # self.saveRegionButton.toolTip = "Save ROI and Omits to File"
+    # self.saveRegionButton.enabled = True
+    # parametersFormLayout.addRow(self.saveRegionButton)
 
     #Get default values of roi radius and center, because these will be used in onApplyButton for unused omits
     print("default center and radius are:")
@@ -767,100 +928,37 @@ class DCE_TumorMapProcessWidget(ScriptedLoadableModuleWidget):
     self.omit1.GetRadiusXYZ(self.roiradius_default)
     print(self.roiradius_default)
 
-      #
-    # Apply Button
-    #
-
-    #Edit 7/10/2020: Changing button label to reflect fact that
-    #based on Aegis, viewing of precontrast ROI, PE ROI, & Tumor Mask ROI
-    #is probably a feature that is not needed.
-    self.applyButton = qt.QPushButton("Generate Report")
-    self.applyButton.toolTip = "Generate Report."
-    self.applyButton.enabled = False
-    parametersFormLayout.addRow(self.applyButton)
-
     #Edit 10/5/2020: Add spin boxes (and corresponding labels) for adjusting BKG thresh % and minconnpix and PE thresholds
-    self.bkgthreshlbl = qt.QLabel("\nPercentage Background Threshold:")
-    parametersFormLayout.addRow(self.bkgthreshlbl)
-    self.bkgthresh = qt.QSpinBox()
-    #set min and max possible values of 10 and 100 (percent) for this spin box
-    self.bkgthresh.setMinimum(10)
-    self.bkgthresh.setMaximum(100)
-    self.bkgthresh.setSingleStep(10)
-    self.bkgthresh.setValue(60) #set default value of 60 for PE threshold spin box
-    parametersFormLayout.addRow(self.bkgthresh)
+    # self.bkgthreshlbl = qt.QLabel("\nPercentage Background Threshold:")
+    # parametersFormLayout.addRow(self.bkgthreshlbl)
+    # self.bkgthresh = qt.QSpinBox()
+    # #set min and max possible values of 10 and 100 (percent) for this spin box
+    # self.bkgthresh.setMinimum(10)
+    # self.bkgthresh.setMaximum(100)
+    # self.bkgthresh.setSingleStep(10)
+    # self.bkgthresh.setValue(60) #set default value of 60 for PE threshold spin box
+    # parametersFormLayout.addRow(self.bkgthresh)
 
-    self.minconnthreshlbl = qt.QLabel("\nMinimum Neighbor Count:")
-    parametersFormLayout.addRow(self.minconnthreshlbl)
-    self.minconnthresh = qt.QSpinBox()
-    #set min and max possible values of 1 and 10 (percent) for this spin box
-    self.minconnthresh.setMinimum(1)
-    self.minconnthresh.setMaximum(10)
-    self.minconnthresh.setValue(4) #set default value of 4 (updated 4/26/21) for min connected neighbors spin box
-    parametersFormLayout.addRow(self.minconnthresh)
+    # self.minconnthreshlbl = qt.QLabel("\nMinimum Neighbor Count:")
+    # parametersFormLayout.addRow(self.minconnthreshlbl)
+    # self.minconnthresh = qt.QSpinBox()
+    # #set min and max possible values of 1 and 10 (percent) for this spin box
+    # self.minconnthresh.setMinimum(1)
+    # self.minconnthresh.setMaximum(10)
+    # self.minconnthresh.setValue(4) #set default value of 4 (updated 4/26/21) for min connected neighbors spin box
+    # parametersFormLayout.addRow(self.minconnthresh)
 
-    self.pethreshlbl = qt.QLabel("\nPeak Enhancement Threshold:")
-    parametersFormLayout.addRow(self.pethreshlbl)
-    self.pethresh = qt.QSpinBox()
-    #set min and max possible values of 10 and 150 for PE threshold spin box
-    self.pethresh.setMinimum(10)
-    self.pethresh.setMaximum(150)
-    self.pethresh.setSingleStep(10)
-    self.pethresh.setValue(70) #set default value of 70 for PE threshold spin box
-    parametersFormLayout.addRow(self.pethresh)
+    # self.pethreshlbl = qt.QLabel("\nPeak Enhancement Threshold:")
+    # parametersFormLayout.addRow(self.pethreshlbl)
+    # self.pethresh = qt.QSpinBox()
+    # #set min and max possible values of 10 and 150 for PE threshold spin box
+    # self.pethresh.setMinimum(10)
+    # self.pethresh.setMaximum(150)
+    # self.pethresh.setSingleStep(10)
+    # self.pethresh.setValue(70) #set default value of 70 for PE threshold spin box
+    # parametersFormLayout.addRow(self.pethresh)
 
-    #7/8/2021: Make this part work no matter which directory & computer
-    #the modules are stored in.
-    #The full path to DCE_TumorMapProcess.py is
-    #automatically stored in __file__ so I'm using that.
-    pathtoscript,scriptname = os.path.split(os.path.realpath(__file__))
-    colorbar_path = os.path.join(pathtoscript,'ser_colorbar.png')
 
-    #SER Color Range image label -- this method works!
-    #5/26/2020: For now, don't worry about resizing the SER Colormap
-    pixmap = qt.QPixmap(colorbar_path)
-    #pixmap.scaledToHeight(50) --this doesn't actually do the resize either
-    #smaller_pixmap = pixmap.scaled(32, 32, qt.KeepAspectRatio, qt.FastTransformation) -- gives syntax error for KeepAspectRatio
-    self.label = qt.QLabel(self)
-    #self.label.resize(25,50) --didn't work either
-    self.label.setPixmap(pixmap)
-    #self.label.setFixedSize(150,200) --this doesn't help, just cuts off image. Need other way to resize.
-    parametersFormLayout.addRow(self.label)
-
-    #Labels for SER Color Percentage Distribution RuntimeError
-    self.TumorPctDistLbl = qt.QLabel()
-    self.TumorPctDistLbl.setText("SER Color Distribution in Lesion")
-    parametersFormLayout.addRow(self.TumorPctDistLbl)
-
-    self.YellowPctLbl = qt.QLabel()
-    self.YellowPctLbl.setText( "Yellow: " )
-    self.YellowValue = qt.QLabel()
-    parametersFormLayout.addRow(self.YellowPctLbl,self.YellowValue)
-
-    self.RedPctLbl = qt.QLabel()
-    self.RedPctLbl.setText( "Red: " )
-    self.RedValue = qt.QLabel()
-    parametersFormLayout.addRow(self.RedPctLbl,self.RedValue)
-
-    self.GreenPctLbl = qt.QLabel()
-    self.GreenPctLbl.setText( "Green: " )
-    self.GreenValue = qt.QLabel()
-    parametersFormLayout.addRow(self.GreenPctLbl,self.GreenValue)
-
-    self.PurplePctLbl = qt.QLabel()
-    self.PurplePctLbl.setText( "Purple: " )
-    self.PurpleValue = qt.QLabel()
-    parametersFormLayout.addRow(self.PurplePctLbl,self.PurpleValue)
-
-    self.BluePctLbl = qt.QLabel()
-    self.BluePctLbl.setText( "Blue: " )
-    self.BlueValue = qt.QLabel()
-    parametersFormLayout.addRow(self.BluePctLbl,self.BlueValue)
-
-    self.TotVolLbl = qt.QLabel()
-    self.TotVolLbl.setText("Total: ")
-    self.TotVolValue = qt.QLabel()
-    parametersFormLayout.addRow(self.TotVolLbl,self.TotVolValue)
 
     # connections
     #Edit 9/29/2020: try adding code to update window and level
@@ -869,16 +967,16 @@ class DCE_TumorMapProcessWidget(ScriptedLoadableModuleWidget):
 
     #Edit: Cannot display axial & sagittal MIPs simultaneously because setting SlabNumberOfSlices for axial MIP
     #messes up sagittal MIP, and vice versa
-    self.subtractCheckBox.stateChanged.connect(self.showSubtractionFromNode)
-    self.axchkbox.stateChanged.connect(self.showAxialMIPFromNode)
-    self.sagchkbox.stateChanged.connect(self.showSagittalMIPFromNode)
+    # self.subtractCheckBox.stateChanged.connect(self.showSubtractionFromNode)
+    # self.axchkbox.stateChanged.connect(self.showAxialMIPFromNode)
+    # self.sagchkbox.stateChanged.connect(self.showSagittalMIPFromNode)
     self.segmentLesionCheckBox.stateChanged.connect(self.segmentLesion) #Edit 7/24/2020: This is now a checkbox option
-    self.applyButton.connect('clicked(bool)', self.onApplyButton)
-    self.addOmitButton.connect('clicked(bool)',self.addOmitRegion)
-    self.importROIButton.connect('clicked(bool)',self.importROIFromFile)
-    self.saveRegionButton.connect('clicked(bool)',self.saveRegionToXML)
-    self.goToROICenterButton.connect('clicked(bool)',self.goToROICenter)
-    self.inputSelector.connect("currentNodeChanged(vtkMRMLNode*)", self.onSelect)
+    # self.applyButton.connect('clicked(bool)', self.onApplyButton)
+    # self.addOmitButton.connect('clicked(bool)',self.addOmitRegion)
+    # self.importROIButton.connect('clicked(bool)',self.importROIFromFile)
+    # self.saveRegionButton.connect('clicked(bool)',self.saveRegionToXML)
+    # self.goToROICenterButton.connect('clicked(bool)',self.goToROICenter)
+    # self.inputSelector.connect("currentNodeChanged(vtkMRMLNode*)", self.onSelect)
 
     #Call function to update text giving axial slice position whenever red slice position is adjusted
     slicer.mrmlScene.GetNodeByID('vtkMRMLSliceNodeRed').AddObserver(vtk.vtkCommand.ModifiedEvent,updateSlicePrint)
@@ -886,7 +984,7 @@ class DCE_TumorMapProcessWidget(ScriptedLoadableModuleWidget):
     slicer.mrmlScene.GetNodeByID('vtkMRMLSliceNodeYellow').AddObserver(vtk.vtkCommand.ModifiedEvent,updateSlicePrint)
 
     # Add vertical spacer
-    self.layout.addStretch(1)
+    # self.layout.addStretch(1)
 
     # Refresh Apply button state
     self.onSelect()
@@ -894,6 +992,19 @@ class DCE_TumorMapProcessWidget(ScriptedLoadableModuleWidget):
 
   def cleanup(self):
     pass
+
+  def icon(self, name="智能诊断@3x.png"):
+      # It should not be necessary to modify this method
+      iconPath = os.path.join(os.path.dirname(__file__), "Resources", "Icons", name)
+      if os.path.exists(iconPath):
+          return qt.QIcon(iconPath)
+      return qt.QIcon()
+
+  def onPredictResult(self):
+      params = {}
+      image_file = self.inputSelector.currentNode().GetName()[:-5]
+      result_params = self.logic.predict(image_file, params)
+      print("result")
   
 
   def updateWindowSettingVariables(self):
@@ -2117,9 +2228,9 @@ class DCE_TumorMapProcessWidget(ScriptedLoadableModuleWidget):
         #NOTE: The way this code is set up, the BKG thresh value from spin box MUST BE DIVIDED BY 100
 
         #threshold values used for lesion segmentation
-        self.segbkgthresh = self.bkgthresh.value/100
-        self.segpethresh = self.pethresh.value
-        self.segmcthresh = self.minconnthresh.value
+        # self.segbkgthresh = self.bkgthresh.value/100
+        # self.segpethresh = self.pethresh.value
+        # self.segmcthresh = self.minconnthresh.value
 
         #7/6/2021: Add exception for DCE series with number and letters in name,
         #like Duke TCIA.
@@ -2334,6 +2445,13 @@ class DCE_TumorMapProcessLogic(ScriptedLoadableModuleLogic):
   Uses ScriptedLoadableModuleLogic base class, available at:
   https://github.com/Slicer/Slicer/blob/master/Base/Python/slicer/ScriptedLoadableModule.py
   """
+
+  def predict(self, image_in, params={}):
+    server_url = 'http://127.0.0.1:8000'
+    client_id = 'user-xyz'
+    client = PhaseSelectClient(server_url, client_id = client_id)
+    result_params = client.prefict(image_in, params)
+    return result_params
 
 
   def hasImageData(self,volumeNode):

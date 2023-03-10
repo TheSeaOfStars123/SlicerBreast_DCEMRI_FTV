@@ -60,6 +60,22 @@ class PhaseSelectClient:
         logging.debug(f"Response: {response}")
         return json.loads(response)
 
+    def predict(self, image_in, params):
+        selector = "/infer/predict/?image={}".format(
+            MONAILabelUtils.urllib_quote_plus(image_in),
+        )
+        status, response, _, _ = MONAILabelUtils.http_method("POST", self._server_url, selector, params)
+        if status != 200:
+            raise MONAILabelException(
+                MONAILabelError.SERVER_ERROR,
+                f"Status: {status}; Response: {response}",
+            )
+
+        response = response.decode("utf-8") if isinstance(response, bytes) else response
+        logging.debug(f"Response: {response}")
+        return json.loads(response)
+
+
 class MONAILabelError:
     RESULT_NOT_FOUND = 1
     SERVER_ERROR = 2

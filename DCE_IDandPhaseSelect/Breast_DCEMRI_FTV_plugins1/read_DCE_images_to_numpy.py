@@ -127,7 +127,7 @@ def readPhilipsImageToNumpy(exampath,dce_folders,fsort,postContrastNum):
     print(np.amin(npimg))
     print(np.amax(npimg))
     slicer.mrmlScene.RemoveNode(volume) #this is how to prevent "unnamed volume ..." from staying in slicer window
-
+    
     npimg = np.transpose(npimg,(2,1,0)) #edit 4/27/2020: using dimension order x,y,z gives same orientation as input DICOM (original numpy one is z,y,x)
     #npimg = np.flip(npimg,2) #apparently slicer method of reading DICOM series always reverses slice order from what we want, so add this flip
     try:
